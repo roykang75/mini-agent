@@ -1,21 +1,8 @@
 import type { AgentEvent } from "./types";
 
-export async function* streamChat(
-  message: string,
-  signal?: AbortSignal,
+async function* parseSSEStream(
+  res: Response,
 ): AsyncGenerator<AgentEvent> {
-  const res = await fetch("/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
-    signal,
-  });
-
-  if (!res.ok) {
-    yield { type: "error", message: `HTTP ${res.status}: ${res.statusText}` };
-    return;
-  }
-
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -44,4 +31,43 @@ export async function* streamChat(
   } finally {
     reader.releaseLock();
   }
+}
+
+export async function* streamChat(
+  message: string,
+  signal?: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  const res = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+    signal,
+  });
+
+  if (!res.ok) {
+    yield { type: "error", message: `HTTP ${res.status}: ${res.statusText}` };
+    return;
+  }
+
+  yield* parseSSEStream(res);
+}
+
+export async function* streamApproval(
+  sessionId: string,
+  approved: boolean,
+  signal?: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  const res = await fetch("/chat/approve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, approved }),
+    signal,
+  });
+
+  if (!res.ok) {
+    yield { type: "error", message: `HTTP ${res.status}: ${res.statusText}` };
+    return;
+  }
+
+  yield* parseSSEStream(res);
 }

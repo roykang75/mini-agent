@@ -7,6 +7,7 @@ import { ThinkingBlock } from "./thinking-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolResultBlock } from "./tool-result-block";
 import { TypingIndicator } from "./typing-indicator";
+import { ToolApprovalBlock } from "./tool-approval-block";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -29,6 +30,7 @@ const EXAMPLE_PROMPTS = [
 interface MessageListProps {
   messages: ChatMessage[];
   onSend?: (message: string) => void;
+  onApproval?: (sessionId: string, approved: boolean) => void;
   isLoading?: boolean;
 }
 
@@ -36,7 +38,7 @@ function isNearBottom(el: HTMLElement, threshold = 80): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
-export function MessageList({ messages, onSend, isLoading }: MessageListProps) {
+export function MessageList({ messages, onSend, onApproval, isLoading }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
 
@@ -112,7 +114,7 @@ export function MessageList({ messages, onSend, isLoading }: MessageListProps) {
             {group.role === "user" ? (
               <UserMessage content={group.messages[0].content} />
             ) : (
-              <AssistantGroup messages={group.messages} />
+              <AssistantGroup messages={group.messages} onApproval={onApproval} isLoading={isLoading} />
             )}
           </div>
         ))}
@@ -139,7 +141,15 @@ function UserMessage({ content }: { content: string }) {
   );
 }
 
-function AssistantGroup({ messages }: { messages: ChatMessage[] }) {
+function AssistantGroup({
+  messages,
+  onApproval,
+  isLoading,
+}: {
+  messages: ChatMessage[];
+  onApproval?: (sessionId: string, approved: boolean) => void;
+  isLoading?: boolean;
+}) {
   return (
     <div className="flex gap-3">
       <div className="size-7 rounded-full bg-foreground flex items-center justify-center shrink-0 mt-0.5">
@@ -157,11 +167,24 @@ function AssistantGroup({ messages }: { messages: ChatMessage[] }) {
                 args={msg.toolArgs!}
               />
             )}
+            {msg.role === "tool_approval" && msg.pendingToolCalls && (
+              <ToolApprovalBlock
+                toolCalls={msg.pendingToolCalls}
+                onApprove={() => onApproval?.(msg.sessionId!, true)}
+                onReject={() => onApproval?.(msg.sessionId!, false)}
+                disabled={msg.content !== "" || isLoading}
+              />
+            )}
             {msg.role === "tool_result" && (
               <ToolResultBlock
                 name={msg.toolName!}
                 output={msg.content}
               />
+            )}
+            {msg.role === "tool_rejected" && (
+              <p className="text-xs text-muted-foreground italic">
+                {msg.content}
+              </p>
             )}
             {msg.role === "assistant" && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
