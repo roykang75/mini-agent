@@ -122,7 +122,7 @@ export function ChatContainer() {
 
   return (
     <div className="flex flex-col h-full">
-      <MessageList messages={messages} onSend={handleSend} />
+      <MessageList messages={messages} onSend={handleSend} isLoading={isLoading} />
       <ChatInput onSend={handleSend} onCancel={handleCancel} isLoading={isLoading} />
     </div>
   );

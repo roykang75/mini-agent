@@ -6,6 +6,7 @@ import type { ChatMessage } from "@/lib/types";
 import { ThinkingBlock } from "./thinking-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolResultBlock } from "./tool-result-block";
+import { TypingIndicator } from "./typing-indicator";
 
 const EXAMPLE_PROMPTS = [
   {
@@ -28,13 +29,14 @@ const EXAMPLE_PROMPTS = [
 interface MessageListProps {
   messages: ChatMessage[];
   onSend?: (message: string) => void;
+  isLoading?: boolean;
 }
 
 function isNearBottom(el: HTMLElement, threshold = 80): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
-export function MessageList({ messages, onSend }: MessageListProps) {
+export function MessageList({ messages, onSend, isLoading }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
 
@@ -98,11 +100,15 @@ export function MessageList({ messages, onSend }: MessageListProps) {
 
   const grouped = groupMessages(messages);
 
+  // typing indicator: 로딩 중이고, 마지막 메시지가 user인 경우 (아직 assistant 응답 시작 전)
+  const lastMsg = messages[messages.length - 1];
+  const showTyping = isLoading && lastMsg?.role === "user";
+
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
         {grouped.map((group) => (
-          <div key={group.id}>
+          <div key={group.id} className="animate-in fade-in duration-300">
             {group.role === "user" ? (
               <UserMessage content={group.messages[0].content} />
             ) : (
@@ -110,6 +116,11 @@ export function MessageList({ messages, onSend }: MessageListProps) {
             )}
           </div>
         ))}
+        {showTyping && (
+          <div className="mx-auto max-w-3xl">
+            <TypingIndicator />
+          </div>
+        )}
       </div>
     </div>
   );
