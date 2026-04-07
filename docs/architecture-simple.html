@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mini Agent - Simple Architecture</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #fff;
+      color: #1a202c;
+      --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 36px;
+    }
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+    .header-title {
+      display: flex;
+      align-items: center;
+      gap: 0;
+    }
+    .header-title .accent-bar {
+      width: 6px;
+      height: 44px;
+      background: #2ECC71;
+      border-radius: 3px;
+      margin-right: 14px;
+    }
+    .header-title h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: #1a1a1a;
+    }
+    .highlight {
+      background: #C8F7DC;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .brand {
+      font-size: 14px;
+      font-weight: 600;
+      color: #777;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #888;
+      margin-top: 4px;
+    }
+    /* Panel */
+    .panel {
+      border: 2.5px solid #222;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      background: #fff;
+      overflow: visible;
+    }
+    .panel-title-bar {
+      padding: 14px 20px;
+      border-bottom: 1.5px dashed #ddd;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #333;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 5px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #333;
+    }
+    .bg-blue { background: #D4EFFF; }
+    .bg-green { background: #C8F7DC; }
+    .bg-pink { background: #FFD6E0; }
+    .bg-purple { background: #E8D5F5; }
+    .bg-orange { background: #FFE0C0; }
+    .bg-yellow { background: #FFF9C4; }
+    /* Split layout */
+    .split {
+      display: flex;
+    }
+    .split-left {
+      flex: 1.2;
+      padding: 20px;
+      overflow: visible;
+    }
+    .split-right {
+      flex: 1;
+      padding: 20px;
+      border-left: 1.5px dashed #ddd;
+    }
+    /* Sub sections in right panel */
+    .sub-section {
+      padding-bottom: 14px;
+      margin-bottom: 14px;
+      border-bottom: 1px dashed #e0e0e0;
+    }
+    .sub-section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    .sub-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #333;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sub-label .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    /* Info rows */
+    .info-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+      font-size: 12.5px;
+    }
+    .info-label {
+      font-weight: 600;
+      color: #555;
+      min-width: 50px;
+    }
+    .info-value {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #333;
+    }
+    .method-badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+    .method-post { background: #C8F7DC; color: #1a7a3a; }
+    /* Tags */
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 5px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #444;
+      background: #F1F5F9;
+      border: 1px solid #E2E8F0;
+    }
+    /* SSE event tags */
+    .sse-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .sse-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      background: #FFE0C0;
+      color: #8B5E2B;
+      border: 1px solid #E6C8A0;
+    }
+    /* Tool list */
+    .tool-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 0;
+      font-size: 12px;
+    }
+    .tool-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: #333;
+    }
+    .tool-target {
+      font-size: 11px;
+      color: #888;
+    }
+    /* Flow panel */
+    .flow-panel-body {
+      padding: 20px;
+      overflow: visible;
+    }
+    .flow-legend {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      background: #F8FAFC;
+      border-radius: 8px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12.5px;
+      color: #475569;
+    }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .flow-svg-container {
+      width: 100%;
+      overflow: visible;
+    }
+    .flow-svg-container svg {
+      width: 100%;
+      height: auto;
+      overflow: visible;
+    }
+    /* HIL summary */
+    .hil-steps {
+      font-size: 12px;
+      color: #555;
+      line-height: 1.7;
+    }
+    .hil-steps .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #FF6B6B;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-title">
+        <div class="accent-bar"></div>
+        <div>
+          <h1><span class="highlight">Mini Agent</span> Architecture</h1>
+          <p class="subtitle">Monolith / Next.js Full-Stack AI Agent Chat UI</p>
+        </div>
+      </div>
+      <div class="brand">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <rect x="2" y="2" width="20" height="20" rx="4" fill="#2ECC71"/>
+          <path d="M7 12h10M12 7v10" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        architecture-draw
+      </div>
+    </div>
+
+    <!-- Panel 1: Main (Left/Right Split) -->
+    <div class="panel">
+      <div class="panel-title-bar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4A9EC5" stroke-width="1.5"><rect x="2" y="2" width="20" height="20" rx="4"/><path d="M12 2v20M2 12h20"/></svg>
+        <span class="badge bg-blue">System Architecture</span>
+        Overview + Key Details
+      </div>
+      <div class="split">
+        <!-- Left: Architecture SVG -->
+        <div class="split-left">
+          <div class="flow-svg-container">
+            <svg viewBox="0 0 520 540" style="width:100%;overflow:visible">
+              <defs>
+                <marker id="arr" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                  <polygon points="0 0, 10 3.5, 0 7" fill="#888"/>
+                </marker>
+                <filter id="sh">
+                  <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+                </filter>
+              </defs>
+
+              <!-- Layer 0: Browser Chat UI -->
+              <g transform="translate(160, 20)" filter="url(#sh)">
+                <rect width="200" height="50" rx="10" fill="#E8D5F5" stroke="#D0B8E8" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#8E44AD" stroke-width="1.5">
+                    <rect x="2" y="3" width="20" height="18" rx="2"/>
+                    <line x1="2" y1="9" x2="22" y2="9"/>
+                    <circle cx="6" cy="6" r="1" fill="#8E44AD"/><circle cx="10" cy="6" r="1" fill="#8E44AD"/><circle cx="14" cy="6" r="1" fill="#8E44AD"/>
+                  </svg>
+                </g>
+                <text x="115" y="30" fill="#333" font-size="13" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Browser Chat UI</text>
+              </g>
+
+              <!-- Arrow: Browser -> API Routes -->
+              <line x1="260" y1="70" x2="260" y2="120" stroke="#888" stroke-width="2.5" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+              <text x="275" y="99" font-size="10.5" fill="#666" font-family="Segoe UI, system-ui, sans-serif">POST + SSE</text>
+
+              <!-- Layer 1: API Routes -->
+              <g transform="translate(160, 120)" filter="url(#sh)">
+                <rect width="200" height="50" rx="10" fill="#D4EFFF" stroke="#A8D8F0" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#2980B9" stroke-width="1.5">
+                    <path d="M12 2l8 4v6c0 5.25-3.5 9.74-8 11-4.5-1.26-8-5.75-8-11V6l8-4z"/>
+                  </svg>
+                </g>
+                <text x="115" y="30" fill="#333" font-size="13" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">API Routes</text>
+              </g>
+
+              <!-- Arrow: API Routes -> Agent Core -->
+              <line x1="260" y1="170" x2="260" y2="220" stroke="#888" stroke-width="2.5" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+              <text x="275" y="199" font-size="10.5" fill="#666" font-family="Segoe UI, system-ui, sans-serif">AsyncGenerator</text>
+
+              <!-- Layer 2: Agent Core -->
+              <g transform="translate(160, 220)" filter="url(#sh)">
+                <rect width="200" height="50" rx="10" fill="#D4EFFF" stroke="#A8D8F0" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#4A9EC5" stroke-width="1.5">
+                    <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/>
+                    <circle cx="6" cy="6" r="1" fill="#4A9EC5"/><circle cx="6" cy="18" r="1" fill="#4A9EC5"/>
+                  </svg>
+                </g>
+                <text x="115" y="30" fill="#333" font-size="13" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Agent Core</text>
+              </g>
+
+              <!-- Arrow: Agent Core -> Tools (left) -->
+              <path d="M 210 270 C 210 295, 140 295, 140 320" fill="none" stroke="#888" stroke-width="2.5" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+              <text x="145" y="298" font-size="10.5" fill="#666" font-family="Segoe UI, system-ui, sans-serif">tool exec</text>
+
+              <!-- Arrow: Agent Core -> Session Store (right) -->
+              <path d="M 310 270 C 310 295, 380 295, 380 320" fill="none" stroke="#888" stroke-width="2.5" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+              <text x="365" y="298" font-size="10.5" fill="#666" font-family="Segoe UI, system-ui, sans-serif">state</text>
+
+              <!-- Layer 3 Left: Tools -->
+              <g transform="translate(40, 320)" filter="url(#sh)">
+                <rect width="200" height="50" rx="10" fill="#FFF9C4" stroke="#E8E0A0" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#F5A623" stroke-width="1.5">
+                    <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+                  </svg>
+                </g>
+                <text x="115" y="30" fill="#333" font-size="13" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Tools</text>
+              </g>
+
+              <!-- Layer 3 Right: Session Store -->
+              <g transform="translate(280, 320)" filter="url(#sh)">
+                <rect width="200" height="50" rx="10" fill="#C8F7DC" stroke="#A0E0B8" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#27AE60" stroke-width="1.5">
+                    <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 5v14c0 1.66-4.03 3-9 3s-9-1.34-9-3V5"/><path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3"/>
+                  </svg>
+                </g>
+                <text x="115" y="30" fill="#333" font-size="12.5" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Session Store</text>
+              </g>
+
+              <!-- Arrow: Tools -> File System / Shell -->
+              <line x1="140" y1="370" x2="140" y2="420" stroke="#888" stroke-width="2.5" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+              <text x="155" y="399" font-size="10.5" fill="#666" font-family="Segoe UI, system-ui, sans-serif">fs / exec</text>
+
+              <!-- Layer 4 Left: File System / Shell -->
+              <g transform="translate(40, 420)" filter="url(#sh)">
+                <rect width="200" height="50" rx="10" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#64748B" stroke-width="1.5">
+                    <rect x="4" y="4" width="16" height="16" rx="2"/>
+                    <path d="M9 9l3 3-3 3"/><line x1="14" y1="15" x2="17" y2="15"/>
+                  </svg>
+                </g>
+                <text x="115" y="30" fill="#333" font-size="13" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">File System / Shell</text>
+              </g>
+
+              <!-- Arrow: Agent Core -> Anthropic API -->
+              <line x1="260" y1="270" x2="260" y2="420" stroke="#888" stroke-width="2" stroke-dasharray="6 3" opacity="0.4"/>
+              <path d="M 260 270 C 260 340, 420 340, 420 420" fill="none" stroke="#888" stroke-width="2.5" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+              <text x="370" y="358" font-size="10.5" fill="#666" font-family="Segoe UI, system-ui, sans-serif">HTTP SDK</text>
+
+              <!-- Layer 4 Right: Anthropic API -->
+              <g transform="translate(320, 420)" filter="url(#sh)">
+                <rect width="185" height="50" rx="10" fill="#FFD6E0" stroke="#E8B0C0" stroke-width="1.5"/>
+                <g transform="translate(14, 15)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#E74C3C" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-5"/>
+                  </svg>
+                </g>
+                <text x="108" y="30" fill="#333" font-size="12.5" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Anthropic API</text>
+              </g>
+
+              <!-- Session Store label -->
+              <text x="380" y="386" font-size="9.5" fill="#999" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">in-memory Map, 30m TTL</text>
+
+              <!-- Anthropic label -->
+              <text x="412" y="486" font-size="9.5" fill="#999" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Claude Sonnet 4</text>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Right: Sub-sections -->
+        <div class="split-right">
+          <!-- API Endpoints -->
+          <div class="sub-section">
+            <div class="sub-label">
+              <span class="dot" style="background: #2980B9"></span>
+              API Endpoints
+            </div>
+            <div class="info-row">
+              <span class="method-badge method-post">POST</span>
+              <span class="info-value">/chat</span>
+              <span class="tool-target" style="margin-left:auto">New conversation</span>
+            </div>
+            <div class="info-row">
+              <span class="method-badge method-post">POST</span>
+              <span class="info-value">/chat/approve</span>
+              <span class="tool-target" style="margin-left:auto">HIL approve/reject</span>
+            </div>
+          </div>
+
+          <!-- SSE Events -->
+          <div class="sub-section">
+            <div class="sub-label">
+              <span class="dot" style="background: #E67E22"></span>
+              SSE Events
+            </div>
+            <div class="sse-tags">
+              <span class="sse-tag">message</span>
+              <span class="sse-tag">tool_call</span>
+              <span class="sse-tag">tool_approval_request</span>
+              <span class="sse-tag">tool_result</span>
+              <span class="sse-tag">tool_rejected</span>
+              <span class="sse-tag">thinking</span>
+              <span class="sse-tag">done</span>
+              <span class="sse-tag">error</span>
+            </div>
+          </div>
+
+          <!-- Tools -->
+          <div class="sub-section">
+            <div class="sub-label">
+              <span class="dot" style="background: #F5A623"></span>
+              Tools
+            </div>
+            <div class="tool-item">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <span class="tool-name">read_file</span>
+              <span class="tool-target">Node.js fs</span>
+            </div>
+            <div class="tool-item">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="1.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              <span class="tool-name">write_file</span>
+              <span class="tool-target">Node.js fs</span>
+            </div>
+            <div class="tool-item">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="1.5"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9l3 3-3 3"/><line x1="14" y1="15" x2="17" y2="15"/></svg>
+              <span class="tool-name">run_command</span>
+              <span class="tool-target">child_process</span>
+            </div>
+          </div>
+
+          <!-- HIL Summary -->
+          <div class="sub-section">
+            <div class="sub-label">
+              <span class="dot" style="background: #FF6B6B"></span>
+              Human-in-the-Loop (HIL)
+            </div>
+            <div class="hil-steps">
+              <span class="step-num">1</span> Agent detects tool_use<br/>
+              <span class="step-num">2</span> SSE: tool_approval_request<br/>
+              <span class="step-num">3</span> User approve / reject<br/>
+              <span class="step-num">4</span> POST /chat/approve<br/>
+              <span class="step-num">5</span> resumeAgent executes or rejects
+            </div>
+          </div>
+
+          <!-- Tech Stack -->
+          <div class="sub-section">
+            <div class="sub-label">
+              <span class="dot" style="background: #27AE60"></span>
+              Tech Stack
+            </div>
+            <div class="tags">
+              <span class="tag">Next.js 16</span>
+              <span class="tag">React 19</span>
+              <span class="tag">Tailwind CSS 4</span>
+              <span class="tag">shadcn/ui</span>
+              <span class="tag">Lucide Icons</span>
+              <span class="tag">Anthropic SDK</span>
+              <span class="tag">Zod</span>
+              <span class="tag">TypeScript</span>
+              <span class="tag">CVA</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 2: HIL Approval Flow (Swim Lane) -->
+    <div class="panel">
+      <div class="panel-title-bar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <span class="badge bg-pink">Data Flow</span>
+        HIL Approval Swim Lane
+      </div>
+      <div class="flow-panel-body">
+        <div class="flow-legend">
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #4A90D9"></span>
+            <span>Chat Flow</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot" style="background: #FF6B6B"></span>
+            <span>HIL Approval Flow</span>
+          </div>
+        </div>
+        <div class="flow-svg-container">
+          <svg viewBox="0 0 1040 520" style="width:100%;overflow:visible">
+            <defs>
+              <marker id="sarr" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#888"/>
+              </marker>
+              <marker id="sarr-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#4A90D9"/>
+              </marker>
+              <marker id="sarr-red" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#FF6B6B"/>
+              </marker>
+              <marker id="sarr-green" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#27AE60"/>
+              </marker>
+              <marker id="sarr-purple" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#8E44AD"/>
+              </marker>
+              <filter id="sh2">
+                <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+              </filter>
+            </defs>
+
+            <!-- Category headers -->
+            <rect x="60" y="8" width="180" height="24" rx="12" fill="#D4EFFF" stroke="#A8D8F0" stroke-width="1"/>
+            <text x="150" y="24" font-size="11" font-weight="700" fill="#2980B9" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">External</text>
+
+            <rect x="290" y="8" width="450" height="24" rx="12" fill="#C8F7DC" stroke="#A0E0B8" stroke-width="1"/>
+            <text x="515" y="24" font-size="11" font-weight="700" fill="#27AE60" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Application</text>
+
+            <rect x="790" y="8" width="180" height="24" rx="12" fill="#FFD6E0" stroke="#E8B0C0" stroke-width="1"/>
+            <text x="880" y="24" font-size="11" font-weight="700" fill="#E74C3C" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">External AI</text>
+
+            <!-- Swim lane headers -->
+            <!-- User -->
+            <g transform="translate(80, 44)" filter="url(#sh2)">
+              <rect width="130" height="44" rx="10" fill="#E8D5F5" stroke="#D0B8E8" stroke-width="1.5"/>
+              <g transform="translate(12, 12)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#8E44AD" stroke-width="1.5">
+                  <rect x="2" y="3" width="20" height="18" rx="2"/><line x1="2" y1="9" x2="22" y2="9"/>
+                  <circle cx="6" cy="6" r="1" fill="#8E44AD"/><circle cx="10" cy="6" r="1" fill="#8E44AD"/>
+                </svg>
+              </g>
+              <text x="75" y="28" fill="#333" font-size="12" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Browser UI</text>
+            </g>
+
+            <!-- API Route -->
+            <g transform="translate(295, 44)" filter="url(#sh2)">
+              <rect width="130" height="44" rx="10" fill="#D4EFFF" stroke="#A8D8F0" stroke-width="1.5"/>
+              <g transform="translate(12, 12)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#2980B9" stroke-width="1.5">
+                  <path d="M12 2l8 4v6c0 5.25-3.5 9.74-8 11-4.5-1.26-8-5.75-8-11V6l8-4z"/>
+                </svg>
+              </g>
+              <text x="75" y="28" fill="#333" font-size="12" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">API Route</text>
+            </g>
+
+            <!-- Agent Core -->
+            <g transform="translate(500, 44)" filter="url(#sh2)">
+              <rect width="130" height="44" rx="10" fill="#D4EFFF" stroke="#A8D8F0" stroke-width="1.5"/>
+              <g transform="translate(12, 12)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#4A9EC5" stroke-width="1.5">
+                  <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/>
+                  <circle cx="6" cy="6" r="1" fill="#4A9EC5"/><circle cx="6" cy="18" r="1" fill="#4A9EC5"/>
+                </svg>
+              </g>
+              <text x="75" y="28" fill="#333" font-size="12" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Agent Core</text>
+            </g>
+
+            <!-- Anthropic API -->
+            <g transform="translate(810, 44)" filter="url(#sh2)">
+              <rect width="140" height="44" rx="10" fill="#FFD6E0" stroke="#E8B0C0" stroke-width="1.5"/>
+              <g transform="translate(12, 12)">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#E74C3C" stroke-width="1.5">
+                  <circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-5"/>
+                </svg>
+              </g>
+              <text x="80" y="28" fill="#333" font-size="12" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Anthropic API</text>
+            </g>
+
+            <!-- Vertical dotted lines -->
+            <line x1="145" y1="88" x2="145" y2="500" stroke="#D0D0D0" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <line x1="360" y1="88" x2="360" y2="500" stroke="#D0D0D0" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <line x1="565" y1="88" x2="565" y2="500" stroke="#D0D0D0" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <line x1="880" y1="88" x2="880" y2="500" stroke="#D0D0D0" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+            <!-- Animated flow path (Chat) -->
+            <path id="chat-flow" d="M 145 120 L 360 120 L 565 170 L 880 170 L 880 220 L 565 220 L 360 270 L 145 270"
+                  fill="none" stroke="#4A90D9" stroke-width="2" stroke-dasharray="8 4" opacity="0.35"/>
+            <circle r="5" fill="#4A90D9" opacity="0.85">
+              <animateMotion dur="6s" repeatCount="indefinite"><mpath href="#chat-flow"/></animateMotion>
+            </circle>
+
+            <!-- Animated flow path (HIL) -->
+            <path id="hil-flow" d="M 565 320 L 360 320 L 145 320 L 145 370 L 360 370 L 565 420 L 880 420 L 880 470 L 565 470 L 360 470 L 145 470"
+                  fill="none" stroke="#FF6B6B" stroke-width="2" stroke-dasharray="8 4" opacity="0.35"/>
+            <circle r="5" fill="#FF6B6B" opacity="0.85">
+              <animateMotion dur="10s" repeatCount="indefinite"><mpath href="#hil-flow"/></animateMotion>
+            </circle>
+
+            <!-- Step 1: User sends message -->
+            <line x1="145" y1="120" x2="350" y2="120" stroke="#4A90D9" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-blue)"/>
+            <circle cx="145" cy="120" r="11" fill="#4A90D9" stroke="none"/>
+            <text x="145" y="124" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">1</text>
+            <rect x="195" y="105" width="100" height="18" rx="4" fill="white" stroke="#4A90D9" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="245" y="118" font-size="10" fill="#4A90D9" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">POST /chat</text>
+
+            <!-- Step 2: API Route -> Agent (runAgent) -->
+            <line x1="360" y1="170" x2="555" y2="170" stroke="#4A90D9" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-blue)"/>
+            <circle cx="360" cy="170" r="11" fill="#4A90D9" stroke="none"/>
+            <text x="360" y="174" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">2</text>
+            <rect x="410" y="155" width="90" height="18" rx="4" fill="white" stroke="#4A90D9" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="455" y="168" font-size="10" fill="#4A90D9" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">runAgent()</text>
+
+            <!-- Step 3: Agent -> Anthropic API -->
+            <line x1="565" y1="220" x2="870" y2="220" stroke="#8E44AD" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-purple)"/>
+            <circle cx="565" cy="220" r="11" fill="#8E44AD" stroke="none"/>
+            <text x="565" y="224" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">3</text>
+            <rect x="660" y="205" width="120" height="18" rx="4" fill="white" stroke="#8E44AD" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="720" y="218" font-size="10" fill="#8E44AD" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">messages.create()</text>
+
+            <!-- Step 4: Anthropic returns tool_use -->
+            <line x1="880" y1="270" x2="575" y2="270" stroke="#8E44AD" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-purple)"/>
+            <circle cx="880" cy="270" r="11" fill="#8E44AD" stroke="none"/>
+            <text x="880" y="274" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">4</text>
+            <rect x="670" y="255" width="120" height="18" rx="4" fill="white" stroke="#8E44AD" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="730" y="268" font-size="10" fill="#8E44AD" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">resp: tool_use</text>
+
+            <!-- Left side label: HIL -->
+            <rect x="10" y="305" width="50" height="60" rx="6" fill="none" stroke="#FF6B6B" stroke-width="1" stroke-dasharray="4 2"/>
+            <text x="35" y="330" font-size="9" fill="#FF6B6B" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">HIL</text>
+            <text x="35" y="342" font-size="9" fill="#FF6B6B" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">Gate</text>
+
+            <!-- Step 5: Agent yields approval request -> SSE to User -->
+            <line x1="565" y1="320" x2="155" y2="320" stroke="#FF6B6B" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-red)"/>
+            <circle cx="565" cy="320" r="11" fill="#FF6B6B" stroke="none"/>
+            <text x="565" y="324" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">5</text>
+            <rect x="285" y="305" width="170" height="18" rx="4" fill="white" stroke="#FF6B6B" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="370" y="318" font-size="10" fill="#FF6B6B" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">SSE: tool_approval_request</text>
+
+            <!-- Step 6: User approves -->
+            <line x1="145" y1="370" x2="350" y2="370" stroke="#27AE60" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-green)"/>
+            <circle cx="145" cy="370" r="11" fill="#27AE60" stroke="none"/>
+            <text x="145" y="374" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">6</text>
+            <rect x="185" y="355" width="120" height="18" rx="4" fill="white" stroke="#27AE60" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="245" y="368" font-size="10" fill="#27AE60" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">POST /chat/approve</text>
+
+            <!-- Step 7: resumeAgent -> tool exec + back to Anthropic -->
+            <line x1="360" y1="420" x2="555" y2="420" stroke="#27AE60" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-green)"/>
+            <circle cx="360" cy="420" r="11" fill="#27AE60" stroke="none"/>
+            <text x="360" y="424" fill="#fff" font-size="10" font-weight="700" text-anchor="middle">7</text>
+            <rect x="400" y="405" width="110" height="18" rx="4" fill="white" stroke="#27AE60" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="455" y="418" font-size="10" fill="#27AE60" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">resumeAgent()</text>
+
+            <!-- Step 7b: Agent executes tool, sends result to Anthropic -->
+            <line x1="565" y1="470" x2="870" y2="470" stroke="#4A90D9" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-blue)"/>
+            <rect x="650" y="455" width="140" height="18" rx="4" fill="white" stroke="#4A90D9" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="720" y="468" font-size="10" fill="#4A90D9" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">tool_result + continue</text>
+
+            <!-- SSE back to user label -->
+            <line x1="360" y1="470" x2="155" y2="470" stroke="#4A90D9" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#sarr-blue)"/>
+            <rect x="200" y="455" width="110" height="18" rx="4" fill="white" stroke="#4A90D9" stroke-width="0.8" stroke-dasharray="4 2"/>
+            <text x="255" y="468" font-size="10" fill="#4A90D9" font-weight="600" font-family="Segoe UI, system-ui, sans-serif" text-anchor="middle">SSE: message</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
