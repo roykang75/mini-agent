@@ -24,7 +24,7 @@ Claude Code와 유사한 AI Agent를 직접 구현한 프로젝트입니다.
 
 | 영역 | 기술 |
 |------|------|
-| Frontend | Next.js (App Router), Tailwind CSS, shadcn/ui |
+| Frontend | Next.js (App Router), Tailwind CSS, shadcn/ui, [Impeccable](https://github.com/coleam00/impeccable) |
 | Backend | Next.js Route Handler, Anthropic SDK |
 | Agent | AsyncGenerator 기반 루프, SSE 스트리밍 |
 | Tools | read_file, write_file, run_command |
