@@ -36,8 +36,11 @@ export function ChatInput({ onSend, onCancel, isLoading }: ChatInputProps) {
   };
 
   return (
-    <div className="border-t border-border bg-background px-4 py-3">
+    <div className="border-t border-border bg-muted/30 px-4 py-3">
       <div className="mx-auto max-w-3xl flex items-end gap-2">
+        <span className="select-none font-mono text-sm text-muted-foreground pb-2 shrink-0" aria-hidden>
+          $
+        </span>
         <textarea
           ref={textareaRef}
           placeholder="메시지를 입력하세요..."
@@ -45,7 +48,7 @@ export function ChatInput({ onSend, onCancel, isLoading }: ChatInputProps) {
           disabled={isLoading}
           onKeyDown={handleKeyDown}
           onInput={resizeTextarea}
-          className="flex-1 resize-none bg-transparent text-sm leading-relaxed placeholder:text-muted-foreground focus:outline-none disabled:opacity-50 py-2"
+          className="flex-1 resize-none bg-transparent font-mono text-sm leading-relaxed placeholder:text-muted-foreground placeholder:font-sans focus:outline-none disabled:opacity-50 py-2"
           autoFocus
         />
         {isLoading ? (
