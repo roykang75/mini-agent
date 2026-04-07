@@ -1,0 +1,15 @@
+- generic [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e10]:
+          - paragraph [ref=e11]: Mini Agent
+          - paragraph [ref=e12]: 무엇을 도와드릴까요?
+      - generic [ref=e14]:
+        - textbox "메시지를 입력하세요..." [active] [ref=e15]
+        - button [ref=e16]:
+          - img
+  - button "Open Next.js Dev Tools" [ref=e22] [cursor=pointer]:
+    - img [ref=e23]
+  - alert [ref=e26]
