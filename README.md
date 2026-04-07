@@ -2,6 +2,7 @@
 
 Claude Code와 유사한 AI Agent를 직접 구현한 프로젝트입니다.
 사용자 명령을 받아 LLM에 전달하고, 툴 호출을 처리하며, 중간 결과를 실시간으로 스트리밍합니다.
+툴 실행 전 사용자 승인을 요청하는 Human-in-the-Loop(HIL) 기능을 포함합니다.
 
 ## 아키텍처
 
@@ -12,12 +13,19 @@ Claude Code와 유사한 AI Agent를 직접 구현한 프로젝트입니다.
     │  { "message": "..." }               │   Agent Loop                 │
     │ ──────────────────────────────────► │ ───────────────────────────► │
     │                                     │                              │
-    │  SSE Stream                         │   tool_use / end_turn        │
+    │  SSE Stream                         │   tool_use 감지              │
     │ ◄─ event: tool_call                │ ◄─────────────────────────── │
-    │ ◄─ event: tool_result              │                              │
-    │ ◄─ event: message                  │   Tool Execution             │
-    │ ◄─ event: done                     │   (read_file, write_file,    │
-    │                                     │    run_command)              │
+    │ ◄─ event: tool_approval_request    │                              │
+    │                                     │   세션 저장 + 스트림 중단     │
+    │  [승인] / [거부]                     │                              │
+    │                                     │                              │
+    │  POST /chat/approve                 │                              │
+    │  { sessionId, approved }            │   세션 복원                   │
+    │ ──────────────────────────────────► │                              │
+    │                                     │   승인 → 툴 실행             │
+    │ ◄─ event: tool_result              │   거부 → 거부 메시지          │
+    │ ◄─ event: message                  │ ───────────────────────────► │
+    │ ◄─ event: done                     │   LLM 재호출                  │
 ```
 
 ## 기술 스택
@@ -27,6 +35,7 @@ Claude Code와 유사한 AI Agent를 직접 구현한 프로젝트입니다.
 | Frontend | Next.js (App Router), Tailwind CSS, shadcn/ui, [Impeccable](https://github.com/coleam00/impeccable) ([참고 블로그](https://medium.com/@ai-den/design-impeccable%EB%A1%9C-%EC%99%84%EC%84%B1%EB%8F%84-%EB%86%92%EC%9D%80-%EC%9B%B9%ED%94%84%EB%A1%A0%ED%8A%B8%EC%97%94%EB%93%9C-%EB%94%94%EC%9E%90%EC%9D%B8%ED%95%98%EA%B8%B0-b4839e96f773)) |
 | Backend | Next.js Route Handler, Anthropic SDK |
 | Agent | AsyncGenerator 기반 루프, SSE 스트리밍 |
+| HIL | 세션 기반 승인/거부 (in-memory, 30분 TTL) |
 | Tools | read_file, write_file, run_command |
 | UI 라이브러리 | Lucide Icons, CVA, tw-animate-css |
 
@@ -35,7 +44,9 @@ Claude Code와 유사한 AI Agent를 직접 구현한 프로젝트입니다.
 ```
 src/
 ├── app/
-│   ├── chat/route.ts            # POST /chat → SSE 스트리밍 API
+│   ├── chat/
+│   │   ├── route.ts             # POST /chat → SSE 스트리밍 API
+│   │   └── approve/route.ts     # POST /chat/approve → 승인/거부 처리
 │   ├── layout.tsx               # 루트 레이아웃
 │   ├── page.tsx                 # Chat UI 페이지
 │   └── globals.css              # 테마 (warm amber tint)
@@ -45,12 +56,14 @@ src/
 │   │   ├── chat-input.tsx       # 터미널 스타일 입력 ($ 프롬프트)
 │   │   ├── message-list.tsx     # 메시지 그룹핑 + 자동 스크롤
 │   │   ├── thinking-block.tsx   # 접을 수 있는 thinking 블록
+│   │   ├── tool-approval-block.tsx # HIL 승인/거부 UI
 │   │   ├── tool-call-block.tsx  # 터미널 윈도우 스타일 툴 호출
 │   │   ├── tool-result-block.tsx # 터미널 윈도우 스타일 툴 결과
 │   │   └── typing-indicator.tsx # 3dot pulse 로딩 인디케이터
 │   └── ui/                      # shadcn 컴포넌트
 ├── lib/
-│   ├── agent.ts                 # Agent 루프 (AsyncGenerator)
+│   ├── agent.ts                 # Agent 루프 (runAgent / resumeAgent)
+│   ├── session.ts               # 세션 스토어 (in-memory, 30분 TTL)
 │   ├── sse-client.ts            # 프론트엔드 SSE 클라이언트
 │   ├── types.ts                 # 공유 타입 (AgentEvent, ChatMessage)
 │   ├── tools/
@@ -98,9 +111,9 @@ while (true) {
   const response = await llm.call(messages, tools);
 
   if (response.isToolCall) {
-    const result = await executeTool(response.tool);
-    messages.push(result);
-    continue;
+    // HIL: 사용자 승인을 기다림
+    yield { type: "tool_approval_request", sessionId, toolCalls };
+    return; // 스트림 중단, 승인 대기
   }
 
   if (response.isDone) break;
@@ -108,9 +121,43 @@ while (true) {
 ```
 
 1. 사용자 메시지를 LLM에 전달
-2. LLM이 툴 호출을 반환하면 해당 툴을 실행하고 결과를 다시 LLM에 전달
-3. LLM이 최종 응답을 반환하면 루프 종료
-4. 모든 중간 과정은 SSE로 실시간 스트리밍
+2. LLM이 툴 호출을 반환하면 **사용자에게 승인을 요청**
+3. 승인 시 툴을 실행하고 결과를 다시 LLM에 전달
+4. 거부 시 LLM에게 거부를 알리고 대안 응답을 생성
+5. LLM이 최종 응답을 반환하면 루프 종료
+6. 모든 중간 과정은 SSE로 실시간 스트리밍
+
+## Human-in-the-Loop (HIL)
+
+툴 실행 전 사용자 승인을 요청하는 안전장치입니다.
+
+### 흐름
+
+```
+POST /chat → Agent Loop → tool_use 감지
+                              │
+                    tool_approval_request 이벤트
+                    (sessionId + pending tools)
+                              │
+                      ◄ 스트림 중단 ►
+                              │
+              ┌───────────────┴───────────────┐
+              │                               │
+         [승인 버튼]                      [거부 버튼]
+              │                               │
+    POST /chat/approve          POST /chat/approve
+    { approved: true }          { approved: false }
+              │                               │
+        툴 실행 → 결과                 거부 → LLM 대안 응답
+              │                               │
+         LLM 재호출                      done 이벤트
+```
+
+### 세션 관리
+
+- 승인 대기 중 대화 상태(메시지 히스토리, pending tool calls)를 세션에 저장
+- 세션은 in-memory Map으로 관리 (30분 TTL, 자동 만료)
+- 승인/거부 처리 후 세션 삭제
 
 ## SSE 이벤트 타입
 
@@ -118,10 +165,19 @@ while (true) {
 |--------|------|
 | `message` | LLM의 텍스트 응답 |
 | `tool_call` | 툴 호출 요청 (이름 + 인자) |
+| `tool_approval_request` | HIL 승인 요청 (sessionId + pending tools) |
 | `tool_result` | 툴 실행 결과 |
+| `tool_rejected` | 툴 실행 거부됨 |
 | `thinking` | LLM의 사고 과정 |
 | `done` | 응답 완료 |
 | `error` | 오류 발생 |
+
+## API 엔드포인트
+
+| 엔드포인트 | 설명 |
+|-----------|------|
+| `POST /chat` | 새 대화 시작 → SSE 스트림 반환 |
+| `POST /chat/approve` | 툴 실행 승인/거부 → SSE 스트림 반환 |
 
 ## 사용 가능한 툴
 
