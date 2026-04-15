@@ -1,17 +1,16 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { Message, ContentBlock } from "./llm/types";
 import type { PendingToolCall } from "./types";
 
 export interface Session {
   id: string;
-  messages: Anthropic.MessageParam[];
+  messages: Message[];
   pendingToolCalls: PendingToolCall[];
-  lastAssistantContent: Anthropic.ContentBlock[];
+  lastAssistantContent: ContentBlock[];
   createdAt: number;
 }
 
 const sessions = new Map<string, Session>();
 
-// 30분 후 자동 만료
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
 function cleanup() {
@@ -23,7 +22,7 @@ function cleanup() {
   }
 }
 
-export function createSession(messages: Anthropic.MessageParam[]): Session {
+export function createSession(messages: Message[]): Session {
   cleanup();
   const id = crypto.randomUUID();
   const session: Session = {
