@@ -4,6 +4,7 @@ import type { PendingToolCall } from "./types";
 export interface Session {
   id: string;
   messages: Message[];
+  systemPrompt: string;
   pendingToolCalls: PendingToolCall[];
   lastAssistantContent: ContentBlock[];
   createdAt: number;
@@ -22,12 +23,13 @@ function cleanup() {
   }
 }
 
-export function createSession(messages: Message[]): Session {
+export function createSession(messages: Message[], systemPrompt: string): Session {
   cleanup();
   const id = crypto.randomUUID();
   const session: Session = {
     id,
     messages,
+    systemPrompt,
     pendingToolCalls: [],
     lastAssistantContent: [],
     createdAt: Date.now(),

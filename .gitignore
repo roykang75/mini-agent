@@ -40,3 +40,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 src/lib/skills/registry.generated.ts
+src/lib/souls/registry.generated.ts

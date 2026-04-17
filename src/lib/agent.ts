@@ -1,4 +1,5 @@
 import { getSkillTools, executeSkill } from "./skills/loader";
+import { loadSoul, type SoulRequest } from "./souls/loader";
 import { createSession, type Session } from "./session";
 import { createLLMClient } from "./llm/client";
 import type { Message, ContentBlock } from "./llm/types";
@@ -8,14 +9,18 @@ const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-5";
 
 const client = createLLMClient();
 
-const SYSTEM_PROMPT = `당신은 사용자의 파일 시스템과 쉘에 접근할 수 있는 AI Agent입니다.
-사용 가능한 도구: read_file, write_file, run_command.
-사용자의 요청을 수행하기 위해 도구를 적극적으로 활용하세요.
-응답은 한국어로 해주세요.`;
-
-export async function* runAgent(userMessage: string): AsyncGenerator<AgentEvent> {
+export async function* runAgent(
+  userMessage: string,
+  personaReq: SoulRequest = {},
+): AsyncGenerator<AgentEvent> {
+  const soul = await loadSoul(personaReq);
+  yield {
+    type: "persona_resolved",
+    persona: soul.resolvedPersona,
+    ref: soul.resolvedRef,
+  };
   const messages: Message[] = [{ role: "user", content: userMessage }];
-  yield* agentLoop(messages);
+  yield* agentLoop(messages, soul.systemPrompt);
 }
 
 export async function* resumeAgent(
@@ -35,7 +40,7 @@ export async function* resumeAgent(
       yield { type: "tool_rejected", name: tc.name };
     }
     session.pendingToolCalls = [];
-    yield* agentLoop(session.messages);
+    yield* agentLoop(session.messages, session.systemPrompt);
     return;
   }
 
@@ -51,15 +56,18 @@ export async function* resumeAgent(
   }
   session.messages.push({ role: "user", content: results });
   session.pendingToolCalls = [];
-  yield* agentLoop(session.messages);
+  yield* agentLoop(session.messages, session.systemPrompt);
 }
 
-async function* agentLoop(messages: Message[]): AsyncGenerator<AgentEvent> {
+async function* agentLoop(
+  messages: Message[],
+  systemPrompt: string,
+): AsyncGenerator<AgentEvent> {
   while (true) {
     const response = await client.chat({
       model: MODEL_ID,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       tools: getSkillTools(),
       messages,
     });
@@ -91,7 +99,7 @@ async function* agentLoop(messages: Message[]): AsyncGenerator<AgentEvent> {
         args: block.input as Record<string, unknown>,
       }));
 
-      const session = createSession(messages);
+      const session = createSession(messages, systemPrompt);
       session.pendingToolCalls = pendingToolCalls;
       session.lastAssistantContent = response.content;
 
