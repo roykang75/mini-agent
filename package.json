@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "gen:skills": "node scripts/gen-skills.mjs",
+    "postinstall": "npm run gen:skills",
     "predev": "npm run gen:skills",
     "prebuild": "npm run gen:skills",
     "dev": "next dev",

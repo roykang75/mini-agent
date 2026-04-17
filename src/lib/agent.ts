@@ -1,4 +1,4 @@
-import { tools as toolDefs, executeTool } from "./tools";
+import { getSkillTools, executeSkill } from "./skills/loader";
 import { createSession, type Session } from "./session";
 import { createLLMClient } from "./llm/client";
 import type { Message, ContentBlock } from "./llm/types";
@@ -41,7 +41,7 @@ export async function* resumeAgent(
 
   const results: ContentBlock[] = [];
   for (const tc of session.pendingToolCalls) {
-    const output = await executeTool(tc.name, tc.args);
+    const output = await executeSkill(tc.name, tc.args);
     yield { type: "tool_result", name: tc.name, output };
     results.push({
       type: "tool_result",
@@ -60,7 +60,7 @@ async function* agentLoop(messages: Message[]): AsyncGenerator<AgentEvent> {
       model: MODEL_ID,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
-      tools: toolDefs,
+      tools: getSkillTools(),
       messages,
     });
 
