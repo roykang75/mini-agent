@@ -21,6 +21,10 @@ export function ChatContainer() {
   // SSE 이벤트 스트림을 처리하는 공통 함수
   const processEvents = useCallback(async (events: AsyncGenerator<AgentEvent>, signal: AbortSignal) => {
     let currentAssistantId: string | null = null;
+    // Tracks assistant bubbles that accumulated text via text_delta so the
+    // subsequent (full-text) `message` event can be suppressed without losing
+    // non-streaming backward compatibility.
+    const streamedBubbles = new Set<string>();
 
     for await (const event of events) {
       if (signal.aborted) break;
@@ -92,7 +96,35 @@ export function ChatContainer() {
           ]);
           break;
 
+        case "text_delta": {
+          if (currentAssistantId) {
+            const idForClosure = currentAssistantId;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === idForClosure
+                  ? { ...m, content: m.content + event.delta }
+                  : m,
+              ),
+            );
+          } else {
+            const id = nextId();
+            currentAssistantId = id;
+            streamedBubbles.add(id);
+            setMessages((prev) => [
+              ...prev,
+              { id, role: "assistant", content: event.delta, timestamp: Date.now() },
+            ]);
+          }
+          break;
+        }
+
         case "message": {
+          // If this bubble was already built via text_delta, the full text is
+          // already present — skip to avoid duplication. The `message` event is
+          // kept for non-streaming providers / fallbacks.
+          if (currentAssistantId && streamedBubbles.has(currentAssistantId)) {
+            break;
+          }
           if (currentAssistantId) {
             setMessages((prev) =>
               prev.map((m) =>
