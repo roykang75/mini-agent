@@ -257,7 +257,9 @@ async function* agentLoop(
     const response = await client.chat({
       model: MODEL_ID,
       max_tokens: 4096,
-      system: systemPrompt,
+      system: [
+        { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+      ],
       tools: getSkillTools(),
       messages,
     });

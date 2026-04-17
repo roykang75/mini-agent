@@ -1,4 +1,4 @@
-import type { LLMRequest, LLMResponse, ContentBlock, StopReason } from "../types";
+import type { LLMRequest, LLMResponse, LLMUsage, ContentBlock, StopReason } from "../types";
 import { LLMError } from "../types";
 import { withRetry } from "../retry";
 import { createLogger } from "../../log";
@@ -20,7 +20,7 @@ interface AnthropicRawResponse {
   content: ContentBlock[];
   stop_reason: StopReason;
   stop_sequence: string | null;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: LLMUsage;
 }
 
 export class AnthropicClient {
@@ -86,6 +86,8 @@ export class AnthropicClient {
           duration_ms: Date.now() - started,
           tokens_in: data.usage.input_tokens,
           tokens_out: data.usage.output_tokens,
+          cache_creation_tokens: data.usage.cache_creation_input_tokens ?? 0,
+          cache_read_tokens: data.usage.cache_read_input_tokens ?? 0,
           stop_reason: data.stop_reason,
         },
         "anthropic chat ok",

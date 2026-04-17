@@ -20,9 +20,19 @@ export interface ToolDef {
   };
 }
 
+export interface CacheControl {
+  type: "ephemeral";
+}
+
+export interface SystemBlock {
+  type: "text";
+  text: string;
+  cache_control?: CacheControl;
+}
+
 export interface LLMRequest {
   model: string;
-  system?: string;
+  system?: string | SystemBlock[];
   messages: Message[];
   tools?: readonly ToolDef[];
   max_tokens: number;
@@ -37,10 +47,17 @@ export type StopReason =
   | "pause_turn"
   | (string & {});
 
+export interface LLMUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
 export interface LLMResponse {
   content: ContentBlock[];
   stop_reason: StopReason;
-  usage: { input_tokens: number; output_tokens: number };
+  usage: LLMUsage;
 }
 
 export class LLMError extends Error {
