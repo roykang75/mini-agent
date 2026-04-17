@@ -20,6 +20,9 @@ import { createLLMClient } from "../llm/client";
 import type { Message } from "../llm/types";
 import { detectSignals, type Signal } from "./signals";
 import type { RawEvent } from "./raw";
+import { createLogger } from "../log";
+
+const log = createLogger("memory");
 
 const PROMPT_VERSION = "v1";
 const MODEL_ID = process.env.CONSOLIDATE_MODEL ?? "claude-sonnet-4-6";
@@ -102,7 +105,10 @@ export async function consolidate(opts: ConsolidateOptions): Promise<Consolidate
       });
       const text = collectTextBlocks(res.content);
       if (process.env.CONSOLIDATE_DEBUG) {
-        console.log(`\n[consolidate-debug] attempt ${attempt} raw LLM output (${text.length} chars):\n${text.slice(0, 4000)}\n---END---`);
+        log.debug(
+          { event: "llm_output_debug", attempt, length: text.length, head: text.slice(0, 4000) },
+          "raw LLM output",
+        );
       }
       const parsed = parseEpisodesResponse(text);
       validateEpisodes(parsed, meta, totalLines);
@@ -113,7 +119,7 @@ export async function consolidate(opts: ConsolidateOptions): Promise<Consolidate
       return { episodes: written, usedFallback: false };
     } catch (e) {
       lastErr = (e as Error).message;
-      console.warn(`[consolidate] attempt ${attempt} failed: ${lastErr}`);
+      log.warn({ event: "consolidate_attempt_failed", attempt, err_message: lastErr }, "attempt failed");
     }
   }
 

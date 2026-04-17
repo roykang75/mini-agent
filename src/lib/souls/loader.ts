@@ -3,6 +3,9 @@ import { join } from "node:path";
 import * as fs from "node:fs";
 import { readBlob, resolveRef } from "isomorphic-git";
 import { PERSONAS, type PersonaName } from "./registry.generated";
+import { createLogger } from "../log";
+
+const log = createLogger("agent");
 
 const PERSONA_SET: ReadonlySet<string> = new Set(PERSONAS);
 const REF_RE = /^[a-zA-Z0-9_.\-/]{1,64}$/;
@@ -91,8 +94,9 @@ export async function loadSoul(req: SoulRequest = {}): Promise<LoadedSoul> {
       content = await readSoulFromHead(persona);
     } catch (e) {
       if (persona === "default") throw e;
-      console.warn(
-        `[souls] fallback to default — failed to read souls/${persona}/SOUL.md: ${(e as Error).message}`,
+      log.warn(
+        { event: "persona_fallback", persona, err_message: (e as Error).message },
+        "fallback to default — failed to read SOUL.md",
       );
       content = await readSoulFromHead("default" as PersonaName);
       return {

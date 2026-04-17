@@ -16,6 +16,9 @@
 import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { createLogger } from "../log";
+
+const log = createLogger("memory");
 
 export interface RawEvent {
   ts: string;
@@ -40,7 +43,7 @@ function memoryDir(): string | undefined {
   const dir = process.env.AGENT_MEMORY_DIR;
   if (!dir) {
     if (!warnedNoDir) {
-      console.warn("[memory/raw] AGENT_MEMORY_DIR not set — raw append skipped");
+      log.warn({ event: "memory_dir_unset" }, "AGENT_MEMORY_DIR not set — raw append skipped");
       warnedNoDir = true;
     }
     return undefined;
