@@ -1,6 +1,9 @@
 import type { LLMRequest, LLMResponse, ContentBlock, StopReason } from "../types";
 import { LLMError } from "../types";
 import { withRetry } from "../retry";
+import { createLogger } from "../../log";
+
+const log = createLogger("llm");
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -46,6 +49,7 @@ export class AnthropicClient {
     };
 
     return withRetry(async () => {
+      const started = Date.now();
       const res = await fetch(this.baseURL, {
         method: "POST",
         cache: "no-store",
@@ -61,10 +65,31 @@ export class AnthropicClient {
         const body = await res.text();
         const retryAfterHeader = res.headers.get("retry-after");
         const retryAfter = retryAfterHeader != null ? Number(retryAfterHeader) : undefined;
+        log.warn(
+          {
+            event: "chat_error",
+            model: req.model,
+            status: res.status,
+            duration_ms: Date.now() - started,
+            retry_after: Number.isFinite(retryAfter) ? retryAfter : undefined,
+          },
+          "anthropic chat failed",
+        );
         throw new LLMError(res.status, body, Number.isFinite(retryAfter) ? retryAfter : undefined);
       }
 
       const data = (await res.json()) as AnthropicRawResponse;
+      log.info(
+        {
+          event: "chat",
+          model: req.model,
+          duration_ms: Date.now() - started,
+          tokens_in: data.usage.input_tokens,
+          tokens_out: data.usage.output_tokens,
+          stop_reason: data.stop_reason,
+        },
+        "anthropic chat ok",
+      );
       return {
         content: data.content.filter(isNonEmptyBlock),
         stop_reason: data.stop_reason,
