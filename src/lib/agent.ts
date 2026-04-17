@@ -13,6 +13,9 @@ import {
 import { composeRecall, shouldRecall } from "./memory/recall";
 import type { Message, ContentBlock } from "./llm/types";
 import type { AgentEvent, PendingToolCall } from "./types";
+import { createLogger } from "./log";
+
+const log = createLogger("skill");
 
 const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-5";
 
@@ -207,8 +210,27 @@ async function* resumeAgentInner(
         });
         isError = true;
       } else {
-        const resolvedArgs = await resolveToolArgsVaultRefs(session.sid, tc.args);
-        output = await executeSkill(tc.name, resolvedArgs);
+        try {
+          const resolvedArgs = await resolveToolArgsVaultRefs(session.sid, tc.args);
+          output = await executeSkill(tc.name, resolvedArgs);
+        } catch (e) {
+          const err = e as Error;
+          output = JSON.stringify({
+            error: "tool_execution_failed",
+            tool: tc.name,
+            message: err.message,
+            hint: "도구 입력이 스키마에 맞지 않거나 실행 중 예외가 발생했습니다. 인자를 점검하고 다시 호출하세요.",
+          });
+          isError = true;
+          log.warn(
+            {
+              event: "tool_execution_failed",
+              tool_name: tc.name,
+              error: { name: err.name, message: err.message },
+            },
+            "tool threw — returning structured tool_result",
+          );
+        }
       }
     }
 
