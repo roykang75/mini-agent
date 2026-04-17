@@ -1,44 +1,78 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Bot, User, FileText, FolderOpen, TerminalSquare } from "lucide-react";
+import { Bot, User, FileText, FolderOpen, TerminalSquare, KeyRound, GitCompare } from "lucide-react";
 import type { ChatMessage } from "@/lib/types";
+import type { PersonaName } from "@/lib/souls/registry.generated";
 import { ThinkingBlock } from "./thinking-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolResultBlock } from "./tool-result-block";
 import { TypingIndicator } from "./typing-indicator";
 import { ToolApprovalBlock } from "./tool-approval-block";
+import { PersonaSelector } from "./persona-selector";
 
-const EXAMPLE_PROMPTS = [
-  {
-    icon: FolderOpen,
-    label: "파일 목록 확인",
-    prompt: "현재 디렉토리의 파일 목록을 알려줘",
-  },
-  {
-    icon: FileText,
-    label: "파일 내용 읽기",
-    prompt: "package.json 파일 내용을 보여줘",
-  },
-  {
-    icon: TerminalSquare,
-    label: "명령어 실행",
-    prompt: "git status 실행 결과를 보여줘",
-  },
-];
+interface ExamplePrompt {
+  icon: typeof FolderOpen;
+  label: string;
+  prompt: string;
+}
+
+const EXAMPLE_PROMPTS_BY_PERSONA: Record<PersonaName, ExamplePrompt[]> = {
+  default: [
+    {
+      icon: FolderOpen,
+      label: "파일 목록 확인",
+      prompt: "현재 디렉토리의 파일 목록을 알려줘",
+    },
+    {
+      icon: FileText,
+      label: "파일 내용 읽기",
+      prompt: "package.json 파일 내용을 보여줘",
+    },
+    {
+      icon: TerminalSquare,
+      label: "명령어 실행",
+      prompt: "git status 실행 결과를 보여줘",
+    },
+  ],
+  "cia-analyst": [
+    {
+      icon: KeyRound,
+      label: "CIA 토큰 요청 테스트",
+      prompt:
+        "CIA 분석을 시작하기 전에 request_credential 도구로 사용자에게 CIA API 토큰을 요청해줘. key는 \"cia_token\", description은 \"CIA API 토큰\" 으로.",
+    },
+    {
+      icon: GitCompare,
+      label: "두 commit 사이 영향 분석",
+      prompt:
+        "impact-analysis.git 저장소의 abc1234 와 def5678 commit 사이의 영향도를 분석해줘.",
+    },
+  ],
+};
 
 interface MessageListProps {
   messages: ChatMessage[];
   onSend?: (message: string) => void;
-  onApproval?: (sessionId: string, approved: boolean) => void;
+  onApproval?: (sessionId: string, approved: boolean, credentials?: Record<string, string>) => void;
   isLoading?: boolean;
+  persona: PersonaName;
+  onPersonaChange: (persona: PersonaName) => void;
 }
 
 function isNearBottom(el: HTMLElement, threshold = 80): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
-export function MessageList({ messages, onSend, onApproval, isLoading }: MessageListProps) {
+export function MessageList({
+  messages,
+  onSend,
+  onApproval,
+  isLoading,
+  persona,
+  onPersonaChange,
+}: MessageListProps) {
+  const examples = EXAMPLE_PROMPTS_BY_PERSONA[persona] ?? EXAMPLE_PROMPTS_BY_PERSONA.default;
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
 
@@ -63,7 +97,7 @@ export function MessageList({ messages, onSend, onApproval, isLoading }: Message
     return (
       <div className="flex-1 flex items-center justify-center px-4">
         <div className="w-full max-w-md space-y-8">
-          <div className="space-y-2">
+          <div className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="font-mono text-muted-foreground text-xs select-none">$</span>
               <h1 className="text-lg font-semibold tracking-tight">Mini Agent</h1>
@@ -71,6 +105,9 @@ export function MessageList({ messages, onSend, onApproval, isLoading }: Message
             <p className="text-sm text-muted-foreground leading-relaxed">
               파일을 읽고, 쓰고, 명령어를 실행할 수 있는 AI Agent입니다.
             </p>
+            <div>
+              <PersonaSelector value={persona} onChange={onPersonaChange} />
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -78,7 +115,7 @@ export function MessageList({ messages, onSend, onApproval, isLoading }: Message
               시작하기
             </p>
             <div className="grid gap-2">
-              {EXAMPLE_PROMPTS.map((example) => (
+              {examples.map((example) => (
                 <button
                   key={example.label}
                   onClick={() => onSend?.(example.prompt)}
@@ -108,7 +145,10 @@ export function MessageList({ messages, onSend, onApproval, isLoading }: Message
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
+      <div className="mx-auto max-w-3xl px-4 py-4 flex justify-end">
+        <PersonaSelector value={persona} onChange={onPersonaChange} compact disabled={isLoading} />
+      </div>
+      <div className="mx-auto max-w-3xl px-4 pb-6 space-y-6">
         {grouped.map((group) => (
           <div key={group.id} className="animate-in fade-in duration-300">
             {group.role === "user" ? (
@@ -147,7 +187,7 @@ function AssistantGroup({
   isLoading,
 }: {
   messages: ChatMessage[];
-  onApproval?: (sessionId: string, approved: boolean) => void;
+  onApproval?: (sessionId: string, approved: boolean, credentials?: Record<string, string>) => void;
   isLoading?: boolean;
 }) {
   return (
@@ -170,7 +210,7 @@ function AssistantGroup({
             {msg.role === "tool_approval" && msg.pendingToolCalls && (
               <ToolApprovalBlock
                 toolCalls={msg.pendingToolCalls}
-                onApprove={() => onApproval?.(msg.sessionId!, true)}
+                onApprove={(credentials) => onApproval?.(msg.sessionId!, true, credentials)}
                 onReject={() => onApproval?.(msg.sessionId!, false)}
                 disabled={msg.content !== "" || isLoading}
               />

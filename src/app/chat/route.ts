@@ -1,5 +1,6 @@
 import { runAgent } from "@/lib/agent";
 import { PersonaValidationError, validatePersona } from "@/lib/souls/loader";
+import { getOrCreateSid, sidCookieHeader } from "@/lib/sid";
 import type { AgentEvent } from "@/lib/types";
 
 const REF_RE = /^[a-zA-Z0-9_.\-/]{1,64}$/;
@@ -25,11 +26,15 @@ function createSSEStream(events: AsyncGenerator<AgentEvent>) {
   });
 }
 
-const SSE_HEADERS = {
-  "Content-Type": "text/event-stream",
-  "Cache-Control": "no-cache",
-  Connection: "keep-alive",
-};
+function sseHeaders(setCookie?: string): HeadersInit {
+  const base: Record<string, string> = {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  };
+  if (setCookie) base["Set-Cookie"] = setCookie;
+  return base;
+}
 
 export async function POST(request: Request) {
   const body = await request.json();
@@ -75,6 +80,9 @@ export async function POST(request: Request) {
     });
   }
 
-  const stream = createSSEStream(runAgent(message, { persona, personaRef }));
-  return new Response(stream, { headers: SSE_HEADERS });
+  const { sid, isNew } = getOrCreateSid(request);
+  const stream = createSSEStream(runAgent(message, sid, { persona, personaRef }));
+  return new Response(stream, {
+    headers: sseHeaders(isNew ? sidCookieHeader(sid) : undefined),
+  });
 }

@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef } from "react";
 import type { ChatMessage, AgentEvent } from "@/lib/types";
 import { streamChat, streamApproval } from "@/lib/sse-client";
+import type { PersonaName } from "@/lib/souls/registry.generated";
 import { MessageList } from "./message-list";
 import { ChatInput } from "./chat-input";
 
@@ -14,6 +15,7 @@ function nextId() {
 export function ChatContainer() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [persona, setPersona] = useState<PersonaName>("default");
   const abortRef = useRef<AbortController | null>(null);
 
   // SSE 이벤트 스트림을 처리하는 공통 함수
@@ -136,7 +138,7 @@ export function ChatContainer() {
     abortRef.current = controller;
 
     try {
-      await processEvents(streamChat(text, controller.signal), controller.signal);
+      await processEvents(streamChat(text, persona, controller.signal), controller.signal);
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         setMessages((prev) => [
@@ -148,9 +150,9 @@ export function ChatContainer() {
       abortRef.current = null;
       setIsLoading(false);
     }
-  }, [processEvents]);
+  }, [processEvents, persona]);
 
-  const handleApproval = useCallback(async (sessionId: string, approved: boolean) => {
+  const handleApproval = useCallback(async (sessionId: string, approved: boolean, credentials?: Record<string, string>) => {
     setIsLoading(true);
 
     // 승인/거부 후 해당 approval 블록을 비활성화
@@ -166,7 +168,7 @@ export function ChatContainer() {
     abortRef.current = controller;
 
     try {
-      await processEvents(streamApproval(sessionId, approved, controller.signal), controller.signal);
+      await processEvents(streamApproval(sessionId, approved, credentials, controller.signal), controller.signal);
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         setMessages((prev) => [
@@ -191,6 +193,8 @@ export function ChatContainer() {
         onSend={handleSend}
         onApproval={handleApproval}
         isLoading={isLoading}
+        persona={persona}
+        onPersonaChange={setPersona}
       />
       <ChatInput onSend={handleSend} onCancel={handleCancel} isLoading={isLoading} />
     </div>

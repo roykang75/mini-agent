@@ -35,12 +35,13 @@ async function* parseSSEStream(
 
 export async function* streamChat(
   message: string,
+  persona?: string,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
   const res = await fetch("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, persona }),
     signal,
   });
 
@@ -55,12 +56,13 @@ export async function* streamChat(
 export async function* streamApproval(
   sessionId: string,
   approved: boolean,
+  credentials?: Record<string, string>,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
   const res = await fetch("/chat/approve", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId, approved }),
+    body: JSON.stringify({ sessionId, approved, credentials }),
     signal,
   });
 
