@@ -4,6 +4,12 @@ import { loadSoul, type SoulRequest } from "./souls/loader";
 import { createSession, type Session } from "./session";
 import { createLLMClient } from "./llm/client";
 import { vault, makeVaultRef, resolveVaultRefs } from "./vault";
+import {
+  appendRaw,
+  closeRaw,
+  newMemorySessionId,
+  setPersona as rawSetPersona,
+} from "./memory/raw";
 import type { Message, ContentBlock } from "./llm/types";
 import type { AgentEvent, PendingToolCall } from "./types";
 
@@ -75,10 +81,42 @@ async function resolveToolArgsVaultRefs(sid: string, value: unknown): Promise<un
   return value;
 }
 
+async function* withRawCapture(
+  memoryId: string,
+  source: AsyncGenerator<AgentEvent>,
+): AsyncGenerator<AgentEvent> {
+  try {
+    for await (const ev of source) {
+      if (ev.type === "persona_resolved") {
+        rawSetPersona(memoryId, ev.persona, ev.ref);
+      }
+      await appendRaw(memoryId, ev.type, ev);
+      yield ev;
+      if (ev.type === "done" || ev.type === "error") {
+        await closeRaw(memoryId);
+      }
+    }
+  } catch (e) {
+    await closeRaw(memoryId);
+    throw e;
+  }
+}
+
 export async function* runAgent(
   userMessage: string,
   sid: string,
   personaReq: SoulRequest = {},
+): AsyncGenerator<AgentEvent> {
+  const memoryId = newMemorySessionId();
+  await appendRaw(memoryId, "user_message", { content: userMessage, sid });
+  yield* withRawCapture(memoryId, runAgentInner(userMessage, sid, personaReq, memoryId));
+}
+
+async function* runAgentInner(
+  userMessage: string,
+  sid: string,
+  personaReq: SoulRequest,
+  memoryId: string,
 ): AsyncGenerator<AgentEvent> {
   const soul = await loadSoul(personaReq);
   yield {
@@ -87,10 +125,18 @@ export async function* runAgent(
     ref: soul.resolvedRef,
   };
   const messages: Message[] = [{ role: "user", content: userMessage }];
-  yield* agentLoop(messages, soul.systemPrompt, sid);
+  yield* agentLoop(messages, soul.systemPrompt, sid, memoryId);
 }
 
 export async function* resumeAgent(
+  session: Session,
+  approved: boolean,
+  credentials?: Record<string, string>,
+): AsyncGenerator<AgentEvent> {
+  yield* withRawCapture(session.memoryId, resumeAgentInner(session, approved, credentials));
+}
+
+async function* resumeAgentInner(
   session: Session,
   approved: boolean,
   credentials?: Record<string, string>,
@@ -108,7 +154,7 @@ export async function* resumeAgent(
       yield { type: "tool_rejected", name: tc.name };
     }
     session.pendingToolCalls = [];
-    yield* agentLoop(session.messages, session.systemPrompt, session.sid);
+    yield* agentLoop(session.messages, session.systemPrompt, session.sid, session.memoryId);
     return;
   }
 
@@ -160,13 +206,14 @@ export async function* resumeAgent(
   }
   session.messages.push({ role: "user", content: results });
   session.pendingToolCalls = [];
-  yield* agentLoop(session.messages, session.systemPrompt, session.sid);
+  yield* agentLoop(session.messages, session.systemPrompt, session.sid, session.memoryId);
 }
 
 async function* agentLoop(
   messages: Message[],
   systemPrompt: string,
   sid: string,
+  memoryId: string,
 ): AsyncGenerator<AgentEvent> {
   while (true) {
     const response = await client.chat({
@@ -204,7 +251,7 @@ async function* agentLoop(
         args: block.input as Record<string, unknown>,
       }));
 
-      const session = createSession(messages, systemPrompt, sid);
+      const session = createSession(messages, systemPrompt, sid, memoryId);
       session.pendingToolCalls = pendingToolCalls;
       session.lastAssistantContent = response.content;
 
