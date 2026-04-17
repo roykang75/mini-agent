@@ -1,22 +1,44 @@
 /**
  * E2E smoke: simulate the resumeAgent tool dispatch path.
- * 1. Store a token in vault under sid.
+ * 1. Store a token in a fake in-test vault backend under sid.
  * 2. Resolve @vault: refs inside synthetic tool args (the same pass agent.ts does).
  * 3. Call executeSkill("http_call", resolvedArgs) against the running cia-mock.
  * 4. Verify the first pass returns missing_fields; the retry returns 200.
  *
- * Run `npm start` in cia-mock-server first.
+ * Run `npm start` in cia-mock-server first. This smoke is decoupled from the
+ * real Vault backend — HashicorpVaultBackend contract is covered by
+ * smoke-vault-backend.ts, and here we only care about the http_call path.
  */
 
 import { executeSkill } from "../src/lib/skills/loader";
-import { vault, resolveVaultRefs } from "../src/lib/vault";
+import { resolveVaultRefs, type VaultBackend } from "../src/lib/vault";
 
 const CIA_URL = process.env.CIA_URL ?? "http://localhost:7777/analyze";
 const SID = "smoke-sid-0001";
 
+function fakeVault(): VaultBackend {
+  const store = new Map<string, string>();
+  return {
+    async put(_, key, value) {
+      store.set(key, value);
+    },
+    async get(_, key) {
+      return store.get(key);
+    },
+    async has(_, key) {
+      return store.has(key);
+    },
+    async clear() {
+      store.clear();
+    },
+  };
+}
+
+const vault = fakeVault();
+
 async function resolveAll(value: unknown): Promise<unknown> {
   if (typeof value === "string") {
-    return value.includes("@vault:") ? await resolveVaultRefs(SID, value) : value;
+    return value.includes("@vault:") ? await resolveVaultRefs(SID, value, vault) : value;
   }
   if (Array.isArray(value)) return Promise.all(value.map(resolveAll));
   if (value && typeof value === "object") {
@@ -39,7 +61,7 @@ function expectJson(raw: string): Record<string, unknown> {
 
 async function main() {
   await vault.put(SID, "cia_token", "smoke-test-token-xyz");
-  console.log(`[setup] stored cia_token in vault[${SID}]`);
+  console.log(`[setup] stored cia_token in fake vault[${SID}]`);
 
   // 1) first call — intentionally omit compare_mode
   const firstArgs = await resolveAll({

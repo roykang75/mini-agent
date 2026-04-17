@@ -1,8 +1,11 @@
+// Vault refs + sid cookie smoke. Backend contract is covered separately in
+// scripts/smoke-vault-backend.ts against a mock Hashicorp Vault server.
+
 import {
-  inMemoryVault,
   makeVaultRef,
   isVaultRef,
   resolveVaultRefs,
+  type VaultBackend,
 } from "../src/lib/vault";
 import {
   makeSid,
@@ -18,24 +21,33 @@ function assertEq<T>(label: string, actual: T, expected: T) {
   console.log(`[ok]   ${label} → ${JSON.stringify(actual)}`);
 }
 
+function fakeVault(): VaultBackend {
+  const store = new Map<string, Map<string, string>>();
+  const bucket = (sid: string) => {
+    let m = store.get(sid);
+    if (!m) {
+      m = new Map();
+      store.set(sid, m);
+    }
+    return m;
+  };
+  return {
+    async put(sid, key, value) {
+      bucket(sid).set(key, value);
+    },
+    async get(sid, key) {
+      return store.get(sid)?.get(key);
+    },
+    async has(sid, key) {
+      return store.get(sid)?.has(key) ?? false;
+    },
+    async clear(sid) {
+      store.delete(sid);
+    },
+  };
+}
+
 async function main() {
-  // --- vault: session isolation ---
-  const v = inMemoryVault();
-  const sidA = makeSid();
-  const sidB = makeSid();
-  await v.put(sidA, "cia_token", "aaa-secret");
-  await v.put(sidB, "cia_token", "bbb-secret");
-
-  assertEq("vault.get sid A", await v.get(sidA, "cia_token"), "aaa-secret");
-  assertEq("vault.get sid B", await v.get(sidB, "cia_token"), "bbb-secret");
-  assertEq("vault.has sid A", await v.has(sidA, "cia_token"), true);
-  assertEq("vault.has sid A unknown key", await v.has(sidA, "other"), false);
-  assertEq("vault.get sid A unknown key", await v.get(sidA, "other"), undefined);
-
-  await v.clear(sidA);
-  assertEq("vault.get after clear(sidA)", await v.get(sidA, "cia_token"), undefined);
-  assertEq("vault.get sidB after clear(sidA)", await v.get(sidB, "cia_token"), "bbb-secret");
-
   // --- refs ---
   assertEq("makeVaultRef('cia_token')", makeVaultRef("cia_token"), "@vault:cia_token");
   assertEq("isVaultRef('@vault:cia_token')", isVaultRef("@vault:cia_token"), true);
@@ -49,20 +61,18 @@ async function main() {
     console.log("[ok]   makeVaultRef rejects invalid keys");
   }
 
-  // --- resolveVaultRefs ---
+  // --- resolveVaultRefs (with injected fake backend so no real Vault is touched) ---
+  const fake = fakeVault();
   const sidC = makeSid();
-  // Use the exported `vault` singleton via module: resolveVaultRefs calls vault.get
-  // To keep the smoke test hermetic we import inMemoryVault above; resolveVaultRefs
-  // however uses the module-level singleton. Populate it:
-  const mod = await import("../src/lib/vault");
-  await mod.vault.put(sidC, "cia_token", "ABCDE");
+  await fake.put(sidC, "cia_token", "ABCDE");
   const resolved = await resolveVaultRefs(
     sidC,
     "Authorization: Bearer @vault:cia_token",
+    fake,
   );
   assertEq("resolveVaultRefs substitutes", resolved, "Authorization: Bearer ABCDE");
 
-  const unresolved = await resolveVaultRefs(sidC, "no @vault:missing here");
+  const unresolved = await resolveVaultRefs(sidC, "no @vault:missing here", fake);
   assertEq("resolveVaultRefs leaves unknown keys", unresolved, "no @vault:missing here");
 
   // --- sid cookie roundtrip ---
@@ -74,7 +84,6 @@ async function main() {
   }
   console.log("[ok]   sidCookieHeader has HttpOnly + SameSite=Lax");
 
-  // Parse "mini_agent_sid=<uuid>; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400" back
   const cookieOnly = header.split(";")[0];
   assertEq("readSidFromCookieHeader roundtrip", readSidFromCookieHeader(cookieOnly), sid);
   assertEq(
@@ -88,7 +97,7 @@ async function main() {
     undefined,
   );
 
-  console.log("\nall vault/sid smoke tests passed.");
+  console.log("\nall vault-ref/sid smoke tests passed.");
 }
 
 main().catch((e) => {
