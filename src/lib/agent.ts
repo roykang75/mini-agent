@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getSkillTools, executeSkill } from "./skills/loader";
 import { loadSoul, type SoulRequest } from "./souls/loader";
 import { createSession, type Session } from "./session";
@@ -11,6 +12,43 @@ const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-5";
 const client = createLLMClient();
 
 export const REQUEST_CREDENTIAL_TOOL = "request_credential";
+
+/** Max allowed identical (name, args) tool attempts within a single agent session. */
+export const RETRY_LIMIT = Number(process.env.RETRY_LIMIT ?? 3);
+
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalize(obj[k])}`).join(",")}}`;
+}
+
+export function hashToolCall(name: string, args: unknown): string {
+  return createHash("sha256")
+    .update(`${name}\u0000${canonicalize(args)}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * Count how many times a (name, args) tool_use with the given hash has appeared
+ * in prior assistant messages. session.messages already contains the current
+ * assistant response when this is checked, so the returned count includes the
+ * current attempt — e.g. the very first time a tool is used, count === 1.
+ */
+export function countPriorToolUses(messages: Message[], hash: string): number {
+  let count = 0;
+  for (const m of messages) {
+    if (m.role !== "assistant" || typeof m.content === "string") continue;
+    for (const block of m.content) {
+      if (block.type === "tool_use" && hashToolCall(block.name, block.input) === hash) {
+        count++;
+      }
+    }
+  }
+  return count;
+}
 
 /**
  * Walk the tool-args object and replace any `@vault:<key>` tokens inside string
@@ -95,8 +133,21 @@ export async function* resumeAgent(
         output = makeVaultRef(key);
       }
     } else {
-      const resolvedArgs = await resolveToolArgsVaultRefs(session.sid, tc.args);
-      output = await executeSkill(tc.name, resolvedArgs);
+      const hash = hashToolCall(tc.name, tc.args);
+      const attemptCount = countPriorToolUses(session.messages, hash);
+      if (attemptCount > RETRY_LIMIT) {
+        output = JSON.stringify({
+          error: "retry_limit_exceeded",
+          tool: tc.name,
+          limit: RETRY_LIMIT,
+          attempts: attemptCount,
+          hint: "같은 인자로 반복 호출하고 있습니다. 입력을 바꾸거나 다른 도구/접근으로 전환하세요.",
+        });
+        isError = true;
+      } else {
+        const resolvedArgs = await resolveToolArgsVaultRefs(session.sid, tc.args);
+        output = await executeSkill(tc.name, resolvedArgs);
+      }
     }
 
     yield { type: "tool_result", name: tc.name, output };
