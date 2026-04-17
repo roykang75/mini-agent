@@ -6,6 +6,7 @@ export type AgentEvent =
   | { type: "tool_approval_request"; sessionId: string; toolCalls: PendingToolCall[] }
   | { type: "tool_result"; name: string; output: string }
   | { type: "tool_rejected"; name: string }
+  | { type: "text_delta"; delta: string }
   | { type: "message"; content: string }
   | { type: "done" }
   | { type: "error"; message: string };

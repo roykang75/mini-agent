@@ -94,7 +94,11 @@ async function* withRawCapture(
       if (ev.type === "persona_resolved") {
         rawSetPersona(memoryId, ev.persona, ev.ref);
       }
-      await appendRaw(memoryId, ev.type, ev);
+      // text_delta is a high-frequency streaming event; raw memory records the
+      // semantic `message` event emitted after the turn completes, so skip deltas.
+      if (ev.type !== "text_delta") {
+        await appendRaw(memoryId, ev.type, ev);
+      }
       yield ev;
       if (ev.type === "done" || ev.type === "error") {
         await closeRaw(memoryId);
@@ -254,7 +258,8 @@ async function* agentLoop(
   memoryId: string,
 ): AsyncGenerator<AgentEvent> {
   while (true) {
-    const response = await client.chat({
+    let response: import("./llm/types").LLMResponse | undefined;
+    for await (const ev of client.chatStream({
       model: MODEL_ID,
       max_tokens: 4096,
       system: [
@@ -262,7 +267,14 @@ async function* agentLoop(
       ],
       tools: getSkillTools(),
       messages,
-    });
+    })) {
+      if (ev.type === "text_delta") {
+        yield { type: "text_delta", delta: ev.text };
+      } else if (ev.type === "done") {
+        response = ev.response;
+      }
+    }
+    if (!response) throw new Error("agent: chatStream ended without done event");
 
     messages.push({ role: "assistant", content: response.content });
 
