@@ -33,6 +33,7 @@ const APPROVAL_BUDGET = 8;
 
 type AgentEvent =
   | { type: "persona_resolved"; persona: string; ref: string }
+  | { type: "memory_recalled"; count: number; ids: string[] }
   | { type: "thinking"; content: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | { type: "tool_approval_request"; sessionId: string; toolCalls: { toolUseId: string; name: string; args: Record<string, unknown> }[] }
@@ -94,6 +95,7 @@ function extractCookies(res: Response): string {
 
 interface CollectedEvents {
   persona?: { persona: string; ref: string };
+  memoryRecalled?: { count: number; ids: string[] };
   toolCalls: { name: string; args: Record<string, unknown> }[];
   toolResults: { name: string; output: string }[];
   messages: string[];
@@ -120,6 +122,10 @@ async function consume(stream: Response, collected: CollectedEvents): Promise<"a
       case "persona_resolved":
         collected.persona = { persona: ev.persona, ref: ev.ref };
         console.log(`[evt] persona_resolved persona=${ev.persona} ref=${ev.ref}`);
+        break;
+      case "memory_recalled":
+        collected.memoryRecalled = { count: ev.count, ids: ev.ids };
+        console.log(`[evt] memory_recalled count=${ev.count} ids=${ev.ids.join(",")}`);
         break;
       case "tool_call":
         collected.toolCalls.push({ name: ev.name, args: ev.args });
@@ -270,6 +276,11 @@ async function main() {
   console.log("\n--- summary ---");
   console.log(`events:      ${collected.rawTypes.length}`);
   console.log(`persona:     ${collected.persona?.persona}`);
+  if (collected.memoryRecalled) {
+    console.log(`recall:      ${collected.memoryRecalled.count} episode(s) — ${collected.memoryRecalled.ids.join(", ")}`);
+  } else {
+    console.log(`recall:      none (first session or idle-gated)`);
+  }
   console.log(`tool_calls:  ${collected.toolCalls.map((c) => c.name).join(", ")}`);
   console.log(`approvals:   ${approvals}`);
   console.log(`http_call results: ${httpResults.length} (ok=${anyHttpOk})`);

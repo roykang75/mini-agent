@@ -10,6 +10,7 @@ import {
   newMemorySessionId,
   setPersona as rawSetPersona,
 } from "./memory/raw";
+import { composeRecall, shouldRecall } from "./memory/recall";
 import type { Message, ContentBlock } from "./llm/types";
 import type { AgentEvent, PendingToolCall } from "./types";
 
@@ -124,8 +125,23 @@ async function* runAgentInner(
     persona: soul.resolvedPersona,
     ref: soul.resolvedRef,
   };
+
+  let systemPrompt = soul.systemPrompt;
+  const memoryDir = process.env.AGENT_MEMORY_DIR;
+  if (memoryDir && shouldRecall(sid)) {
+    const { prompt, hits } = await composeRecall(memoryDir, userMessage);
+    if (hits.length > 0) {
+      systemPrompt = `${systemPrompt}\n${prompt}`;
+      yield {
+        type: "memory_recalled",
+        count: hits.length,
+        ids: hits.map((h) => h.episode.id),
+      };
+    }
+  }
+
   const messages: Message[] = [{ role: "user", content: userMessage }];
-  yield* agentLoop(messages, soul.systemPrompt, sid, memoryId);
+  yield* agentLoop(messages, systemPrompt, sid, memoryId);
 }
 
 export async function* resumeAgent(
