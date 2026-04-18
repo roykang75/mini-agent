@@ -29,7 +29,7 @@ import {
   newMemorySessionId,
   setPersona as rawSetPersona,
 } from "../memory/raw";
-import { composeRecall, shouldRecall } from "../memory/recall";
+import { composeCombinedRecall, shouldRecall } from "../memory/recall";
 import type { Message, ContentBlock, LLMResponse } from "../llm/types";
 import type { AgentEvent, PendingToolCall } from "../types";
 import { createLogger } from "../log";
@@ -46,6 +46,12 @@ const log = createLogger("agent");
 export const SID_TTL_SEC = 24 * 60 * 60;
 
 const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-6";
+
+// Curriculum recall (ADR-006 Phase A). 실 세션 receive 경로에 3-인칭 훈련 기록을
+// surface 한다. `CURRICULUM_DIR` 가 빈 문자열로 세팅되면 curriculum 경로 비활성.
+const CURRICULUM_DIR_RAW =
+  process.env.CURRICULUM_DIR ?? "/Users/roy/Workspace/agent/agent-curriculum";
+const CURRICULUM_DIR: string | null = CURRICULUM_DIR_RAW === "" ? null : CURRICULUM_DIR_RAW;
 
 const client = createLLMClient();
 
@@ -247,17 +253,32 @@ export class AgentInstance {
       ref: soul.resolvedRef,
     };
 
-    // Memory recall only on the very first receive (empty working memory).
+    // Memory + curriculum recall only on the very first receive (empty working memory).
     if (this.messages.length === 0) {
       const memoryDir = process.env.AGENT_MEMORY_DIR;
       if (memoryDir && shouldRecall(this.sid)) {
-        const { prompt, hits } = await composeRecall(memoryDir, userMessage);
-        if (hits.length > 0) {
+        const { prompt, memoryHits, curriculumHits } = await composeCombinedRecall(
+          memoryDir,
+          CURRICULUM_DIR,
+          MODEL_ID,
+          userMessage,
+        );
+        if (prompt.length > 0) {
           this.systemPrompt = `${this.systemPrompt}\n${prompt}`;
+        }
+        if (memoryHits.length > 0) {
           yield {
             type: "memory_recalled",
-            count: hits.length,
-            ids: hits.map((h) => h.episode.id),
+            count: memoryHits.length,
+            ids: memoryHits.map((h) => h.episode.id),
+          };
+        }
+        if (curriculumHits.length > 0) {
+          yield {
+            type: "curriculum_recalled",
+            count: curriculumHits.length,
+            problem_ids: curriculumHits.map((h) => h.record.problem_id),
+            model: MODEL_ID,
           };
         }
       }

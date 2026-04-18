@@ -1,6 +1,7 @@
 export type AgentEvent =
   | { type: "persona_resolved"; persona: string; ref: string }
   | { type: "memory_recalled"; count: number; ids: string[] }
+  | { type: "curriculum_recalled"; count: number; problem_ids: string[]; model: string }
   | { type: "thinking"; content: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | { type: "tool_approval_request"; sessionId: string; toolCalls: PendingToolCall[] }
