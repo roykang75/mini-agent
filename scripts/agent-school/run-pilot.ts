@@ -11,19 +11,21 @@
  */
 
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
 import { summonAgent, disposeAgent } from "../../src/lib/agent/registry";
 import { askAdvisor } from "../../src/lib/llm/advisor";
 import type { AgentEvent } from "../../src/lib/types";
 
-// Isolate memory dir (memory/raw.ts reads this lazily — OK to set before main).
-const REAL_MEMORY_DIR =
-  process.env.AGENT_MEMORY_DIR ?? "/Users/roy/Workspace/agent/agent-memory";
-const CURRICULUM_MEMORY_DIR = join(REAL_MEMORY_DIR, "curriculum");
-process.env.AGENT_MEMORY_DIR = CURRICULUM_MEMORY_DIR;
-mkdirSync(join(CURRICULUM_MEMORY_DIR, "raw"), { recursive: true });
+// Output goes to the agent-curriculum repo (3-인칭 shared store, per ADR-006 + AGENTS.md).
+// Raw session events during curriculum runs go to a scratch dir inside agent-curriculum,
+// NOT to agent-memory (which is the 1-인칭 production store).
+const CURRICULUM_REPO = "/Users/roy/Workspace/agent/agent-curriculum";
+const MODEL_TAG = process.env.LLM_MODEL ?? "claude-sonnet-4-6";
+const DATE_TAG = new Date().toISOString().slice(0, 10);
+
+process.env.AGENT_MEMORY_DIR = join(CURRICULUM_REPO, "raw-scratch");
+mkdirSync(join(CURRICULUM_REPO, "raw-scratch", "raw"), { recursive: true });
 
 // Inline env loader for .env.local (tsx doesn't load Next's env).
 function loadEnvLocal(): void {
@@ -172,9 +174,7 @@ async function gradeProblem(
     `ask_advisor was called: ${advisorCalled}`,
   ].join("\n");
 
-  const __filename_self = fileURLToPath(import.meta.url);
-  const __dirname_self = dirname(__filename_self);
-  const gradePromptPath = resolve(__dirname_self, "../../prompts/grade-curriculum-v1.md");
+  const gradePromptPath = join(CURRICULUM_REPO, "prompts/grade-curriculum-v1.md");
   const gradeSystem = readFileSync(gradePromptPath, "utf8");
 
   const response = await askAdvisor(
@@ -218,14 +218,15 @@ function writeEpisode(
   sr: SelfReflection,
   sid: string,
 ): string {
-  const episodesDir = join(CURRICULUM_MEMORY_DIR, "episodes", "curriculum");
-  mkdirSync(episodesDir, { recursive: true });
-  const outPath = join(episodesDir, `${p.id}.md`);
+  const runsDir = join(CURRICULUM_REPO, "runs", DATE_TAG, MODEL_TAG);
+  mkdirSync(runsDir, { recursive: true });
+  const outPath = join(runsDir, `${p.id}.md`);
 
   const frontmatter = [
     "---",
     `problem_id: ${p.id}`,
-    `training_source: curriculum`,
+    `model: ${MODEL_TAG}`,
+    `ran_at: ${new Date().toISOString()}`,
     `session_sid: ${sid}`,
     `category: ${p.category}`,
     `tier_opus_predicted: ${p.tier}`,
@@ -275,7 +276,8 @@ function writeEpisode(
 // -------- Main --------
 
 async function main() {
-  console.log(`[info] curriculum memory dir: ${CURRICULUM_MEMORY_DIR}`);
+  console.log(`[info] curriculum repo: ${CURRICULUM_REPO}`);
+  console.log(`[info] model: ${MODEL_TAG}   date: ${DATE_TAG}`);
   console.log(`[info] problems: ${PROBLEMS.length}`);
 
   const results: Array<{
