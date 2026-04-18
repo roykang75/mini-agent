@@ -1,5 +1,5 @@
 import { REQUEST_CREDENTIAL_TOOL } from "@/lib/agent/instance";
-import { getAgent } from "@/lib/agent/registry";
+import { summonAgent } from "@/lib/agent/registry";
 import { readSidFromCookieHeader } from "@/lib/sid";
 import type { AgentEvent } from "@/lib/types";
 
@@ -54,11 +54,7 @@ export async function POST(request: Request) {
     return jsonError("sid cookie missing", 403);
   }
 
-  const agent = getAgent(cookieSid);
-  if (!agent) {
-    return jsonError("agent not found — session may have expired", 404);
-  }
-
+  const agent = await summonAgent(cookieSid);
   if (agent.pendingSessionId !== sessionId) {
     return jsonError("approval sessionId does not match agent's pending state", 404);
   }

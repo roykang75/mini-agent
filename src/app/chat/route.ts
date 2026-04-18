@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   }
 
   const { sid, isNew } = getOrCreateSid(request);
-  const agent = summonAgent(sid);
+  const agent = await summonAgent(sid);
   const stream = createSSEStream(agent.receive(message, { persona, personaRef }));
   return new Response(stream, {
     headers: sseHeaders(isNew ? sidCookieHeader(sid) : undefined),

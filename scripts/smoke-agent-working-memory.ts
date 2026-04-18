@@ -90,7 +90,7 @@ async function probe(): Promise<void> {
   __clearAllAgents();
 
   const sid = "wm-test-sid-0001";
-  const agent = summonAgent(sid);
+  const agent = await summonAgent(sid);
 
   // --- Turn 1 ---
   const events1: string[] = [];

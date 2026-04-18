@@ -33,10 +33,19 @@ import { composeRecall, shouldRecall } from "../memory/recall";
 import type { Message, ContentBlock, LLMResponse } from "../llm/types";
 import type { AgentEvent, PendingToolCall } from "../types";
 import { createLogger } from "../log";
+import {
+  type SerializedAgentState,
+  type SerializedPendingApproval,
+  type WorkingMemoryStore,
+  getWorkingMemoryStore,
+} from "./store";
 
 const log = createLogger("agent");
 
-const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-5";
+/** Working state TTL in seconds — matches sid cookie lifetime (24h). */
+export const SID_TTL_SEC = 24 * 60 * 60;
+
+const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-6";
 
 const client = createLLMClient();
 
@@ -98,12 +107,7 @@ async function resolveToolArgsVaultRefs(sid: string, value: unknown): Promise<un
   return value;
 }
 
-interface PendingApproval {
-  sessionId: string;
-  pendingToolCalls: PendingToolCall[];
-  lastAssistantContent: ContentBlock[];
-  memoryId: string;
-}
+type PendingApproval = SerializedPendingApproval;
 
 export interface AgentIntrospection {
   sid: string;
@@ -152,10 +156,55 @@ export class AgentInstance {
   private advisorCalls: number = 0;
   private pending: PendingApproval | null = null;
 
-  constructor(sid: string) {
+  constructor(sid: string, hydrated?: SerializedAgentState) {
     this.sid = sid;
-    this.createdAt = Date.now();
-    this.lastActiveAt = this.createdAt;
+    if (hydrated) {
+      this.createdAt = hydrated.createdAt;
+      this.lastActiveAt = hydrated.lastActiveAt;
+      this.messages = hydrated.messages;
+      this.systemPrompt = hydrated.systemPrompt;
+      this.resolvedPersona = hydrated.resolvedPersona;
+      this.resolvedRef = hydrated.resolvedRef;
+      this.advisorCalls = hydrated.advisorCalls;
+      this.pending = hydrated.pending;
+    } else {
+      this.createdAt = Date.now();
+      this.lastActiveAt = this.createdAt;
+    }
+  }
+
+  static fromSerialized(state: SerializedAgentState): AgentInstance {
+    if (state.version !== 1) {
+      throw new Error(`AgentInstance: unknown state version ${state.version}`);
+    }
+    return new AgentInstance(state.sid, state);
+  }
+
+  serialize(): SerializedAgentState {
+    return {
+      version: 1,
+      sid: this.sid,
+      messages: this.messages,
+      systemPrompt: this.systemPrompt,
+      resolvedPersona: this.resolvedPersona,
+      resolvedRef: this.resolvedRef,
+      advisorCalls: this.advisorCalls,
+      pending: this.pending,
+      createdAt: this.createdAt,
+      lastActiveAt: this.lastActiveAt,
+    };
+  }
+
+  async persist(store?: WorkingMemoryStore): Promise<void> {
+    const s = store ?? getWorkingMemoryStore();
+    try {
+      await s.put(this.sid, this.serialize(), SID_TTL_SEC);
+    } catch (e) {
+      log.warn(
+        { event: "persist_failed", sid: this.sid, err_message: (e as Error).message },
+        "store.put failed — working memory not persisted this turn",
+      );
+    }
   }
 
   /** Roy 가 메시지를 보냄 → 내가 받아서 내 messages 에 통합하고 추론. */
@@ -175,7 +224,11 @@ export class AgentInstance {
     const memoryId = newMemorySessionId();
     await appendRaw(memoryId, "user_message", { content: userMessage, sid: this.sid });
 
-    yield* withRawCapture(memoryId, this.runReceive(userMessage, personaReq, memoryId));
+    try {
+      yield* withRawCapture(memoryId, this.runReceive(userMessage, personaReq, memoryId));
+    } finally {
+      await this.persist();
+    }
   }
 
   private async *runReceive(
@@ -233,7 +286,11 @@ export class AgentInstance {
     const pending = this.pending;
     this.pending = null;
 
-    yield* withRawCapture(pending.memoryId, this.runResume(pending, approved, credentials));
+    try {
+      yield* withRawCapture(pending.memoryId, this.runResume(pending, approved, credentials));
+    } finally {
+      await this.persist();
+    }
   }
 
   private async *runResume(

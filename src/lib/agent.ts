@@ -10,9 +10,12 @@ export {
   ASK_ADVISOR_TOOL,
   RETRY_LIMIT,
   ADVISOR_CALL_LIMIT,
+  SID_TTL_SEC,
   hashToolCall,
   countPriorToolUses,
 } from "./agent/instance";
 export type { AgentIntrospection } from "./agent/instance";
 
 export { summonAgent, getAgent, disposeAgent, sweepIdle } from "./agent/registry";
+export { getWorkingMemoryStore, __setWorkingMemoryStore, InMemoryStore, RedisStore } from "./agent/store";
+export type { SerializedAgentState, WorkingMemoryStore } from "./agent/store";
