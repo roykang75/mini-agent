@@ -30,7 +30,7 @@ export class AnthropicClient {
 
   constructor(opts: AnthropicClientOptions = {}) {
     this.explicitApiKey = opts.apiKey;
-    this.baseURL = opts.baseURL ?? ANTHROPIC_API_URL;
+    this.baseURL = opts.baseURL ?? process.env.ANTHROPIC_BASE_URL ?? ANTHROPIC_API_URL;
   }
 
   private resolveApiKey(): string {

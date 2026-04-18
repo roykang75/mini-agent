@@ -1,4 +1,4 @@
-import { runAgent } from "@/lib/agent";
+import { summonAgent } from "@/lib/agent/registry";
 import { PersonaValidationError, validatePersona } from "@/lib/souls/loader";
 import { getOrCreateSid, sidCookieHeader } from "@/lib/sid";
 import type { AgentEvent } from "@/lib/types";
@@ -81,7 +81,8 @@ export async function POST(request: Request) {
   }
 
   const { sid, isNew } = getOrCreateSid(request);
-  const stream = createSSEStream(runAgent(message, sid, { persona, personaRef }));
+  const agent = summonAgent(sid);
+  const stream = createSSEStream(agent.receive(message, { persona, personaRef }));
   return new Response(stream, {
     headers: sseHeaders(isNew ? sidCookieHeader(sid) : undefined),
   });

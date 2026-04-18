@@ -1,5 +1,5 @@
-import { REQUEST_CREDENTIAL_TOOL, resumeAgent } from "@/lib/agent";
-import { getSession, deleteSession } from "@/lib/session";
+import { REQUEST_CREDENTIAL_TOOL } from "@/lib/agent/instance";
+import { getAgent } from "@/lib/agent/registry";
 import { readSidFromCookieHeader } from "@/lib/sid";
 import type { AgentEvent } from "@/lib/types";
 
@@ -49,18 +49,22 @@ export async function POST(request: Request) {
     return jsonError("credentials must be an object map", 400);
   }
 
-  const session = getSession(sessionId);
-  if (!session) {
-    return jsonError("session not found or expired", 404);
+  const cookieSid = readSidFromCookieHeader(request.headers.get("cookie"));
+  if (!cookieSid) {
+    return jsonError("sid cookie missing", 403);
   }
 
-  const cookieSid = readSidFromCookieHeader(request.headers.get("cookie"));
-  if (!cookieSid || cookieSid !== session.sid) {
-    return jsonError("sid cookie missing or does not match approval session", 403);
+  const agent = getAgent(cookieSid);
+  if (!agent) {
+    return jsonError("agent not found — session may have expired", 404);
+  }
+
+  if (agent.pendingSessionId !== sessionId) {
+    return jsonError("approval sessionId does not match agent's pending state", 404);
   }
 
   if (approved) {
-    for (const tc of session.pendingToolCalls) {
+    for (const tc of agent.pendingToolCalls) {
       if (tc.name !== REQUEST_CREDENTIAL_TOOL) continue;
       const provided = (credentials as Record<string, unknown> | undefined)?.[tc.toolUseId];
       if (typeof provided !== "string" || provided.length === 0) {
@@ -73,10 +77,12 @@ export async function POST(request: Request) {
   }
 
   const stream = createSSEStream(
-    resumeAgent(session, approved, credentials as Record<string, string> | undefined),
+    agent.resumeAfterApproval(
+      sessionId,
+      approved,
+      credentials as Record<string, string> | undefined,
+    ),
   );
-
-  deleteSession(sessionId);
 
   return new Response(stream, { headers: SSE_HEADERS });
 }
