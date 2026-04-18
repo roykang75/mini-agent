@@ -1,5 +1,6 @@
 import type { LLMRequest, LLMResponse } from "./types";
 import { AnthropicClient } from "./providers/anthropic";
+import { OpenAICompatClient } from "./providers/openai-compat";
 
 export type StreamEvent =
   | { type: "text_delta"; text: string }
@@ -15,6 +16,8 @@ export function createLLMClient(): LLMClient {
   switch (provider) {
     case "anthropic":
       return new AnthropicClient();
+    case "openai-compat":
+      return new OpenAICompatClient();
     default:
       throw new Error(`Unknown LLM provider: ${provider}`);
   }
