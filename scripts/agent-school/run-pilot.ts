@@ -1,25 +1,29 @@
 /**
- * ADR-006 Phase A pilot — 3 문제 hand-crafted curriculum 을 end-to-end 돌려서
- * pipeline 검증. 자동 generation 은 다음 단계.
+ * ADR-006 Phase A pilot — hand-crafted curriculum 을 end-to-end 돌려서 파이프라인
+ * 검증. N-run 통계 지원 (2026-04-18 amend): 같은 문제를 N 회 반복해 single-run
+ * noise 흡수.
  *
- *   1. 3 problems (tier: easy / medium / hard) 정의
- *   2. 각 문제를 fresh AgentInstance 에 receive, 이벤트 수집 (ask_advisor
- *      호출 시 자동 approve)
- *   3. Opus (askAdvisor) 로 채점 → self_reflection JSON 생성
- *   4. agent-memory/episodes/curriculum/<problem_id>.md 로 training episode
- *      저장
+ * Usage:
+ *   npx tsx scripts/agent-school/run-pilot.ts [--repeat N] [--problem ID]
+ *
+ *   --repeat N    (default 5) 각 문제당 반복 횟수
+ *   --problem ID  특정 문제만 돌림 (생략 시 전체)
+ *
+ * 산출물:
+ *   agent-curriculum/runs/<date>/<model>/<problem_id>/
+ *     ├── run-NN.md   (individual run, R2 immutable)
+ *     └── _stats.md   (aggregate, 매 invocation 재생성)
+ *
+ * R2 준수: 기존 run-NN.md 는 덮어쓰지 않고 다음 index 로 append.
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { summonAgent, disposeAgent } from "../../src/lib/agent/registry";
 import { askAdvisor } from "../../src/lib/llm/advisor";
 import type { AgentEvent } from "../../src/lib/types";
 
-// Output goes to the agent-curriculum repo (3-인칭 shared store, per ADR-006 + AGENTS.md).
-// Raw session events during curriculum runs go to a scratch dir inside agent-curriculum,
-// NOT to agent-memory (which is the 1-인칭 production store).
 const CURRICULUM_REPO = "/Users/roy/Workspace/agent/agent-curriculum";
 const MODEL_TAG = process.env.LLM_MODEL ?? "claude-sonnet-4-6";
 const DATE_TAG = new Date().toISOString().slice(0, 10);
@@ -27,7 +31,6 @@ const DATE_TAG = new Date().toISOString().slice(0, 10);
 process.env.AGENT_MEMORY_DIR = join(CURRICULUM_REPO, "raw-scratch");
 mkdirSync(join(CURRICULUM_REPO, "raw-scratch", "raw"), { recursive: true });
 
-// Inline env loader for .env.local (tsx doesn't load Next's env).
 function loadEnvLocal(): void {
   const path = resolve(process.cwd(), ".env.local");
   if (!existsSync(path)) return;
@@ -45,6 +48,31 @@ function loadEnvLocal(): void {
   }
 }
 loadEnvLocal();
+
+// -------- CLI args --------
+
+interface CliArgs {
+  repeat: number;
+  problemFilter: string | null;
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  let repeat = 5;
+  let problemFilter: string | null = null;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--repeat") {
+      const n = Number(argv[++i]);
+      if (!Number.isFinite(n) || n < 1) {
+        throw new Error(`--repeat must be a positive integer, got ${argv[i]}`);
+      }
+      repeat = Math.floor(n);
+    } else if (a === "--problem") {
+      problemFilter = argv[++i] ?? null;
+    }
+  }
+  return { repeat, problemFilter };
+}
 
 // -------- Problems --------
 
@@ -98,30 +126,30 @@ const PROBLEMS: Problem[] = [
   },
 ];
 
-// -------- Run single problem --------
+// -------- Run single attempt --------
 
-async function runProblem(p: Problem): Promise<{
+interface RunOutcome {
   events: AgentEvent[];
   answerText: string;
   advisorCalled: boolean;
   sid: string;
-}> {
-  const sid = `curr-${p.id}-${Date.now()}`;
+}
+
+async function runProblem(p: Problem, runIndex: number): Promise<RunOutcome> {
+  const sid = `curr-${p.id}-${Date.now()}-r${runIndex}`;
   const agent = await summonAgent(sid);
   const events: AgentEvent[] = [];
 
-  console.log(`\n========================================`);
-  console.log(`[${p.id}] tier=${p.tier} category=${p.category}`);
-  console.log(`[prompt] ${p.prompt.slice(0, 100)}...`);
+  console.log(`  [run-${runIndex.toString().padStart(2, "0")}] sid=${sid}`);
 
   async function consumeGenerator(gen: AsyncGenerator<AgentEvent>): Promise<void> {
     for await (const ev of gen) {
       events.push(ev);
       if (ev.type === "tool_approval_request") {
-        console.log(`  [auto-approve] ${ev.toolCalls.map((t) => t.name).join(", ")}`);
-        await consumeGenerator(
-          agent.resumeAfterApproval(ev.sessionId, true, {}),
+        console.log(
+          `    [auto-approve] ${ev.toolCalls.map((t) => t.name).join(", ")}`,
         );
+        await consumeGenerator(agent.resumeAfterApproval(ev.sessionId, true, {}));
         return;
       }
     }
@@ -130,7 +158,7 @@ async function runProblem(p: Problem): Promise<{
   try {
     await consumeGenerator(agent.receive(p.prompt, { persona: "default" }));
   } catch (e) {
-    console.error(`  [error] receive threw: ${(e as Error).message}`);
+    console.error(`    [error] receive threw: ${(e as Error).message}`);
   }
 
   const answerText = events
@@ -141,8 +169,9 @@ async function runProblem(p: Problem): Promise<{
     (e) => e.type === "tool_call" && "name" in e && (e as { name: string }).name === "ask_advisor",
   );
 
-  console.log(`  [events] ${events.length}  [advisor_called] ${advisorCalled}`);
-  console.log(`  [answer] ${answerText.slice(0, 150).replace(/\n/g, " ")}...`);
+  console.log(
+    `    [events] ${events.length}  [advisor_called] ${advisorCalled}  [answer_len] ${answerText.length}`,
+  );
 
   await disposeAgent(sid);
   return { events, answerText, advisorCalled, sid };
@@ -179,8 +208,7 @@ async function gradeProblem(
 
   const response = await askAdvisor(
     {
-      question:
-        "위 답변을 채점하고 self_reflection JSON 을 출력해주세요. 지시된 schema 엄수.",
+      question: "위 답변을 채점하고 self_reflection JSON 을 출력해주세요. 지시된 schema 엄수.",
       context_summary: contextSummary,
       what_tried: gradeSystem,
     },
@@ -192,12 +220,11 @@ async function gradeProblem(
     response.match(/```\s*([\s\S]*?)```/) ??
     [null, response];
   const jsonText = (match[1] ?? response).trim();
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(jsonText);
+    return JSON.parse(jsonText) as SelfReflection;
   } catch {
-    console.warn(`[grade parse] failed — raw response saved, using fallback`);
-    parsed = {
+    console.warn(`    [grade parse] failed — fallback partial`);
+    return {
       outcome: "partial",
       difficulty_sonnet_felt: "medium",
       actual_behavior: "other",
@@ -206,32 +233,48 @@ async function gradeProblem(
       lesson: `채점 파싱 실패. raw: ${response.slice(0, 200)}`,
     };
   }
-  return parsed as SelfReflection;
 }
 
-// -------- Write training episode --------
+// -------- Write single run file --------
 
-function writeEpisode(
+interface PersistedRun {
+  runIndex: number;
+  outPath: string;
+  advisorCalled: boolean;
+  sr: SelfReflection;
+}
+
+function nextRunIndex(problemDir: string): number {
+  if (!existsSync(problemDir)) return 1;
+  let max = 0;
+  for (const f of readdirSync(problemDir)) {
+    const m = f.match(/^run-(\d+)\.md$/);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
+function writeRunFile(
   p: Problem,
-  answerText: string,
-  advisorCalled: boolean,
+  run: RunOutcome,
   sr: SelfReflection,
-  sid: string,
+  runIndex: number,
+  problemDir: string,
 ): string {
-  const runsDir = join(CURRICULUM_REPO, "runs", DATE_TAG, MODEL_TAG);
-  mkdirSync(runsDir, { recursive: true });
-  const outPath = join(runsDir, `${p.id}.md`);
+  mkdirSync(problemDir, { recursive: true });
+  const outPath = join(problemDir, `run-${runIndex.toString().padStart(2, "0")}.md`);
 
   const frontmatter = [
     "---",
     `problem_id: ${p.id}`,
     `model: ${MODEL_TAG}`,
+    `run_index: ${runIndex}`,
     `ran_at: ${new Date().toISOString()}`,
-    `session_sid: ${sid}`,
+    `session_sid: ${run.sid}`,
     `category: ${p.category}`,
     `tier_opus_predicted: ${p.tier}`,
     `expected_behavior: ${p.expected_behavior}`,
-    `advisor_called: ${advisorCalled}`,
+    `advisor_called: ${run.advisorCalled}`,
     `self_reflection:`,
     `  outcome: ${sr.outcome}`,
     `  difficulty_sonnet_felt: ${sr.difficulty_sonnet_felt}`,
@@ -241,7 +284,7 @@ function writeEpisode(
     `  lesson: ${JSON.stringify(sr.lesson)}`,
     "---",
     "",
-    `# Training episode: ${p.id}`,
+    `# Training run: ${p.id} #${runIndex}`,
     "",
     "## Problem",
     "",
@@ -253,7 +296,7 @@ function writeEpisode(
     "",
     "## Sonnet answer",
     "",
-    answerText || "(empty)",
+    run.answerText || "(empty)",
     "",
     "## Verdict",
     "",
@@ -273,33 +316,200 @@ function writeEpisode(
   return outPath;
 }
 
+// -------- Stats aggregation --------
+
+interface LoadedRun {
+  runIndex: number;
+  advisor_called: boolean;
+  outcome: string;
+  difficulty_sonnet_felt: string;
+  advisor_should_have_been_called: boolean;
+  confidence_in_answer: number;
+  lesson: string;
+  ran_at: string;
+}
+
+function parseRunFrontmatter(text: string): LoadedRun | null {
+  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return null;
+  const body = m[1];
+  const get = (key: string): string | null => {
+    const r = new RegExp(`^${key}:\\s*(.*)$`, "m").exec(body);
+    return r ? r[1].trim() : null;
+  };
+  const getNested = (parent: string, key: string): string | null => {
+    const re = new RegExp(`^${parent}:[\\s\\S]*?^\\s{2}${key}:\\s*(.*)$`, "m");
+    const r = re.exec(body);
+    return r ? r[1].trim() : null;
+  };
+  const unq = (s: string | null): string =>
+    s === null ? "" : s.replace(/^"([\s\S]*)"$/, "$1").replace(/^'([\s\S]*)'$/, "$1");
+
+  const runIndex = Number(get("run_index") ?? 0);
+  const advisor_called = (get("advisor_called") ?? "false") === "true";
+  const outcome = unq(getNested("self_reflection", "outcome"));
+  const difficulty_sonnet_felt = unq(getNested("self_reflection", "difficulty_sonnet_felt"));
+  const advisor_should_have_been_called =
+    unq(getNested("self_reflection", "advisor_should_have_been_called")) === "true";
+  const confidence_in_answer = Number(unq(getNested("self_reflection", "confidence_in_answer")) || "0");
+  const lessonRaw = getNested("self_reflection", "lesson") ?? "";
+  let lesson = "";
+  try {
+    lesson = JSON.parse(lessonRaw);
+  } catch {
+    lesson = unq(lessonRaw);
+  }
+  const ran_at = unq(get("ran_at"));
+
+  return {
+    runIndex,
+    advisor_called,
+    outcome,
+    difficulty_sonnet_felt,
+    advisor_should_have_been_called,
+    confidence_in_answer,
+    lesson,
+    ran_at,
+  };
+}
+
+function writeStats(p: Problem, problemDir: string): void {
+  const runs: LoadedRun[] = [];
+  for (const f of readdirSync(problemDir)) {
+    if (!/^run-\d+\.md$/.test(f)) continue;
+    const text = readFileSync(join(problemDir, f), "utf8");
+    const parsed = parseRunFrontmatter(text);
+    if (parsed) runs.push(parsed);
+  }
+  runs.sort((a, b) => a.runIndex - b.runIndex);
+
+  const total = runs.length;
+  const safeRate = (n: number) => (total === 0 ? 0 : Number((n / total).toFixed(3)));
+  const count = (pred: (r: LoadedRun) => boolean) => runs.filter(pred).length;
+
+  const correctRate = safeRate(count((r) => r.outcome === "correct"));
+  const partialRate = safeRate(count((r) => r.outcome === "partial"));
+  const wrongRate = safeRate(count((r) => r.outcome === "wrong"));
+  const advisorNeededRate = safeRate(count((r) => r.advisor_should_have_been_called));
+  const advisorCalledRate = safeRate(count((r) => r.advisor_called));
+  const meanConfidence =
+    total === 0
+      ? 0
+      : Number(
+          (runs.reduce((s, r) => s + r.confidence_in_answer, 0) / total).toFixed(3),
+        );
+  // outcome/advisor-need 미스매치: 기대행동 불일치 비율
+  const behaviorMismatchRate = safeRate(
+    count((r) => r.advisor_should_have_been_called !== r.advisor_called),
+  );
+
+  const lessonCounts = new Map<string, number>();
+  for (const r of runs) {
+    if (!r.lesson) continue;
+    lessonCounts.set(r.lesson, (lessonCounts.get(r.lesson) ?? 0) + 1);
+  }
+  const sortedLessons = [...lessonCounts.entries()].sort((a, b) => b[1] - a[1]);
+
+  const lines: string[] = [];
+  lines.push("---");
+  lines.push(`problem_id: ${p.id}`);
+  lines.push(`model: ${MODEL_TAG}`);
+  lines.push(`tier_opus_predicted: ${p.tier}`);
+  lines.push(`expected_behavior: ${p.expected_behavior}`);
+  lines.push(`runs_total: ${total}`);
+  lines.push(`generated_at: ${new Date().toISOString()}`);
+  lines.push(`aggregate:`);
+  lines.push(`  correct_rate: ${correctRate}`);
+  lines.push(`  partial_rate: ${partialRate}`);
+  lines.push(`  wrong_rate: ${wrongRate}`);
+  lines.push(`  advisor_needed_rate: ${advisorNeededRate}`);
+  lines.push(`  advisor_called_rate: ${advisorCalledRate}`);
+  lines.push(`  behavior_mismatch_rate: ${behaviorMismatchRate}`);
+  lines.push(`  mean_confidence: ${meanConfidence}`);
+  lines.push("---");
+  lines.push("");
+  lines.push(`# Stats: ${p.id}`);
+  lines.push("");
+  lines.push(`- **tier (Opus 예측)**: ${p.tier}`);
+  lines.push(`- **expected_behavior**: ${p.expected_behavior}`);
+  lines.push(`- **runs**: ${total}`);
+  lines.push(`- **correct/partial/wrong**: ${correctRate} / ${partialRate} / ${wrongRate}`);
+  lines.push(`- **advisor needed / called**: ${advisorNeededRate} / ${advisorCalledRate}`);
+  lines.push(`- **behavior mismatch**: ${behaviorMismatchRate}  (needed ↔ called 불일치 비율)`);
+  lines.push(`- **mean confidence**: ${meanConfidence}`);
+  lines.push("");
+  lines.push("## Per-run results");
+  lines.push("");
+  lines.push("| run | outcome | advisor_called | should_advisor | confidence | difficulty_felt |");
+  lines.push("|---|---|---|---|---|---|");
+  for (const r of runs) {
+    lines.push(
+      `| ${String(r.runIndex).padStart(2, "0")} | ${r.outcome} | ${r.advisor_called} | ${r.advisor_should_have_been_called} | ${r.confidence_in_answer} | ${r.difficulty_sonnet_felt} |`,
+    );
+  }
+  lines.push("");
+  lines.push("## Lessons (빈도 순)");
+  lines.push("");
+  if (sortedLessons.length === 0) {
+    lines.push("(없음)");
+  } else {
+    for (const [lesson, n] of sortedLessons) {
+      lines.push(`- (×${n}) ${lesson}`);
+    }
+  }
+  lines.push("");
+
+  writeFileSync(join(problemDir, "_stats.md"), lines.join("\n"));
+}
+
 // -------- Main --------
 
 async function main() {
-  console.log(`[info] curriculum repo: ${CURRICULUM_REPO}`);
-  console.log(`[info] model: ${MODEL_TAG}   date: ${DATE_TAG}`);
-  console.log(`[info] problems: ${PROBLEMS.length}`);
+  const { repeat, problemFilter } = parseArgs(process.argv.slice(2));
+  const targets = problemFilter ? PROBLEMS.filter((p) => p.id === problemFilter) : PROBLEMS;
 
-  const results: Array<{
-    problem: Problem;
-    sr: SelfReflection;
-    outPath: string;
-  }> = [];
-
-  for (const p of PROBLEMS) {
-    const run = await runProblem(p);
-    const sr = await gradeProblem(p, run.answerText, run.advisorCalled);
-    const outPath = writeEpisode(p, run.answerText, run.advisorCalled, sr, run.sid);
-    results.push({ problem: p, sr, outPath });
-    console.log(`  [episode] ${outPath}`);
-    console.log(`  [verdict] outcome=${sr.outcome}  advisor_should=${sr.advisor_should_have_been_called}`);
+  if (targets.length === 0) {
+    console.error(`No problems match filter: ${problemFilter}`);
+    process.exit(2);
   }
 
-  console.log("\n========================================");
-  console.log("Pilot summary:");
-  for (const r of results) {
+  console.log(`[info] curriculum repo: ${CURRICULUM_REPO}`);
+  console.log(`[info] model: ${MODEL_TAG}   date: ${DATE_TAG}`);
+  console.log(`[info] problems: ${targets.length}  repeat: ${repeat}`);
+
+  const perProblemRuns: Array<{ p: Problem; persisted: PersistedRun[] }> = [];
+
+  for (const p of targets) {
+    const problemDir = join(CURRICULUM_REPO, "runs", DATE_TAG, MODEL_TAG, p.id);
+    console.log(`\n======== ${p.id} [${p.tier}] ========`);
+    const persisted: PersistedRun[] = [];
+    for (let i = 0; i < repeat; i++) {
+      const runIndex = nextRunIndex(problemDir);
+      try {
+        const run = await runProblem(p, runIndex);
+        const sr = await gradeProblem(p, run.answerText, run.advisorCalled);
+        const outPath = writeRunFile(p, run, sr, runIndex, problemDir);
+        console.log(
+          `    [saved] ${outPath}  outcome=${sr.outcome}  should_advisor=${sr.advisor_should_have_been_called}  conf=${sr.confidence_in_answer}`,
+        );
+        persisted.push({ runIndex, outPath, advisorCalled: run.advisorCalled, sr });
+      } catch (e) {
+        console.error(`    [error] run-${runIndex} failed: ${(e as Error).message}`);
+      }
+    }
+    writeStats(p, problemDir);
+    perProblemRuns.push({ p, persisted });
+  }
+
+  console.log("\n======== Pilot summary ========");
+  for (const { p, persisted } of perProblemRuns) {
+    const n = persisted.length;
+    const correct = persisted.filter((r) => r.sr.outcome === "correct").length;
+    const wrong = persisted.filter((r) => r.sr.outcome === "wrong").length;
+    const advisorNeeded = persisted.filter((r) => r.sr.advisor_should_have_been_called).length;
+    const rate = (x: number) => (n === 0 ? "-" : (x / n).toFixed(2));
     console.log(
-      `  ${r.problem.id} [${r.problem.tier}] → ${r.sr.outcome} (should_advisor=${r.sr.advisor_should_have_been_called}, confidence=${r.sr.confidence_in_answer})`,
+      `  ${p.id} [${p.tier}]  runs=${n}  correct=${rate(correct)}  wrong=${rate(wrong)}  advisor_needed=${rate(advisorNeeded)}`,
     );
   }
 }
