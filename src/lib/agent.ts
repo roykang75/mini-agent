@@ -22,9 +22,24 @@ const MODEL_ID = process.env.LLM_MODEL ?? "claude-sonnet-4-5";
 const client = createLLMClient();
 
 export const REQUEST_CREDENTIAL_TOOL = "request_credential";
+export const ASK_ADVISOR_TOOL = "ask_advisor";
 
 /** Max allowed identical (name, args) tool attempts within a single agent session. */
 export const RETRY_LIMIT = Number(process.env.RETRY_LIMIT ?? 3);
+
+/** Max advisor calls per memory-session. Infinity when env unset. */
+export const ADVISOR_CALL_LIMIT = process.env.ADVISOR_CALL_LIMIT
+  ? Number(process.env.ADVISOR_CALL_LIMIT)
+  : Infinity;
+
+// Per memoryId counter for advisor calls. Cleared on done/error in withRawCapture.
+const advisorCalls = new Map<string, number>();
+
+/** Test-only: clear advisor counter for a given memoryId (or all if omitted). */
+export function __resetAdvisorCalls(memoryId?: string): void {
+  if (memoryId === undefined) advisorCalls.clear();
+  else advisorCalls.delete(memoryId);
+}
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -102,10 +117,12 @@ async function* withRawCapture(
       yield ev;
       if (ev.type === "done" || ev.type === "error") {
         await closeRaw(memoryId);
+        advisorCalls.delete(memoryId);
       }
     }
   } catch (e) {
     await closeRaw(memoryId);
+    advisorCalls.delete(memoryId);
     throw e;
   }
 }
@@ -204,6 +221,12 @@ async function* resumeAgentInner(
     } else {
       const hash = hashToolCall(tc.name, tc.args);
       const attemptCount = countPriorToolUses(session.messages, hash);
+      const advisorPrior = advisorCalls.get(session.memoryId) ?? 0;
+      const overAdvisorLimit =
+        tc.name === ASK_ADVISOR_TOOL &&
+        Number.isFinite(ADVISOR_CALL_LIMIT) &&
+        advisorPrior >= ADVISOR_CALL_LIMIT;
+
       if (attemptCount > RETRY_LIMIT) {
         output = JSON.stringify({
           error: "retry_limit_exceeded",
@@ -213,7 +236,22 @@ async function* resumeAgentInner(
           hint: "같은 인자로 반복 호출하고 있습니다. 입력을 바꾸거나 다른 도구/접근으로 전환하세요.",
         });
         isError = true;
+      } else if (overAdvisorLimit) {
+        output = JSON.stringify({
+          error: "advisor_call_limit_exceeded",
+          limit: ADVISOR_CALL_LIMIT,
+          calls: advisorPrior,
+          hint: "세션당 advisor 호출 한도를 초과했습니다. 직접 추론으로 돌아가거나 사용자에게 현재 맥락을 요약해 보고하세요.",
+        });
+        isError = true;
+        log.warn(
+          { event: "advisor_call_limit_exceeded", memory_session_id: session.memoryId, limit: ADVISOR_CALL_LIMIT, calls: advisorPrior },
+          "advisor call limit tripped",
+        );
       } else {
+        if (tc.name === ASK_ADVISOR_TOOL) {
+          advisorCalls.set(session.memoryId, advisorPrior + 1);
+        }
         try {
           const resolvedArgs = await resolveToolArgsVaultRefs(session.sid, tc.args);
           output = await executeSkill(tc.name, resolvedArgs);

@@ -5,7 +5,7 @@
 
 import pino, { type Logger, type LoggerOptions } from "pino";
 
-export type Component = "agent" | "skill" | "vault" | "memory" | "llm" | "route";
+export type Component = "agent" | "skill" | "vault" | "memory" | "llm" | "route" | "advisor";
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
