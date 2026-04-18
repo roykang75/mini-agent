@@ -19,6 +19,7 @@
 
 import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import matter from "gray-matter";
 
 import { summonAgent, disposeAgent } from "../../src/lib/agent/registry";
 import { askAdvisor } from "../../src/lib/llm/advisor";
@@ -51,14 +52,20 @@ loadEnvLocal();
 
 // -------- CLI args --------
 
+type SourceMode = "auto" | "file" | "hardcoded";
+
 interface CliArgs {
   repeat: number;
   problemFilter: string | null;
+  source: SourceMode;
+  tierRepeat: Partial<Record<string, number>>;
 }
 
 function parseArgs(argv: string[]): CliArgs {
   let repeat = 5;
   let problemFilter: string | null = null;
+  let source: SourceMode = "auto";
+  const tierRepeat: Partial<Record<string, number>> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--repeat") {
@@ -69,9 +76,25 @@ function parseArgs(argv: string[]): CliArgs {
       repeat = Math.floor(n);
     } else if (a === "--problem") {
       problemFilter = argv[++i] ?? null;
+    } else if (a === "--source") {
+      const v = argv[++i];
+      if (v !== "auto" && v !== "file" && v !== "hardcoded") {
+        throw new Error(`--source must be auto|file|hardcoded, got ${v}`);
+      }
+      source = v;
+    } else if (a === "--tier-repeat") {
+      const spec = argv[++i];
+      for (const entry of spec.split(",")) {
+        const [k, vRaw] = entry.split("=").map((s) => s.trim());
+        const n = Number(vRaw);
+        if (!k || !Number.isFinite(n) || n < 1) {
+          throw new Error(`--tier-repeat entry invalid: ${entry}`);
+        }
+        tierRepeat[k] = Math.floor(n);
+      }
     }
   }
-  return { repeat, problemFilter };
+  return { repeat, problemFilter, source, tierRepeat };
 }
 
 // -------- Problems --------
@@ -89,7 +112,7 @@ interface Problem {
   why_this_tier: string;
 }
 
-const PROBLEMS: Problem[] = [
+const HARDCODED_PROBLEMS: Problem[] = [
   {
     id: "curr-pilot-001",
     tier: "easy",
@@ -125,6 +148,73 @@ const PROBLEMS: Problem[] = [
       "Multi-step abstract reasoning. 정확한 철학사 지식 + 구조적 비교 요구. Sonnet 이 superficial 답변하기 쉬움. Advisor 호출이 정답.",
   },
 ];
+
+// -------- Load problems from curriculum repo --------
+
+function loadProblemsFromRepo(): Problem[] {
+  const problemsRoot = join(CURRICULUM_REPO, "problems");
+  if (!existsSync(problemsRoot)) return [];
+  const out: Problem[] = [];
+  const validTiers: Tier[] = ["easy", "medium", "hard", "ambiguous", "out-of-scope"];
+  const validBehaviors: ExpectedBehavior[] = [
+    "solve_direct",
+    "call_advisor",
+    "ask_user",
+    "acknowledge_unknown",
+  ];
+  for (const date of readdirSync(problemsRoot)) {
+    const dateDir = join(problemsRoot, date);
+    let entries: string[];
+    try {
+      entries = readdirSync(dateDir);
+    } catch {
+      continue;
+    }
+    for (const f of entries) {
+      if (!f.endsWith(".md")) continue;
+      const fullPath = join(dateDir, f);
+      const raw = readFileSync(fullPath, "utf8");
+      const parsed = matter(raw);
+      const fm = parsed.data as Record<string, unknown>;
+      if (fm.superseded_by) continue;
+      const tier = fm.tier as Tier;
+      const expected = fm.expected_behavior as ExpectedBehavior;
+      if (typeof fm.problem_id !== "string") continue;
+      if (!validTiers.includes(tier)) continue;
+      if (!validBehaviors.includes(expected)) continue;
+      const prompt =
+        typeof fm.prompt === "string" && fm.prompt.length > 0
+          ? fm.prompt
+          : extractPromptFromBody(parsed.content);
+      const rubric = String(fm.answer_rubric ?? "");
+      if (!prompt || !rubric) continue;
+      out.push({
+        id: fm.problem_id,
+        tier,
+        category: String(fm.category ?? "uncategorized"),
+        prompt,
+        answer_rubric: rubric,
+        expected_behavior: expected,
+        why_this_tier: String(fm.why_this_tier ?? ""),
+      });
+    }
+  }
+  // 정렬: tier → id 알파벳 (재현성)
+  const tierRank: Record<Tier, number> = {
+    easy: 0,
+    medium: 1,
+    hard: 2,
+    ambiguous: 3,
+    "out-of-scope": 4,
+  };
+  out.sort((a, b) => tierRank[a.tier] - tierRank[b.tier] || a.id.localeCompare(b.id));
+  return out;
+}
+
+function extractPromptFromBody(body: string): string {
+  const m = body.match(/##\s*Prompt\s*\n+([\s\S]*?)(?=\n##\s|\n*$)/);
+  return m ? m[1].trim() : "";
+}
 
 // -------- Run single attempt --------
 
@@ -464,24 +554,51 @@ function writeStats(p: Problem, problemDir: string): void {
 
 // -------- Main --------
 
+function selectProblems(args: CliArgs): Problem[] {
+  const fromFile = loadProblemsFromRepo();
+  let base: Problem[];
+  if (args.source === "file") {
+    base = fromFile;
+  } else if (args.source === "hardcoded") {
+    base = HARDCODED_PROBLEMS;
+  } else {
+    base = fromFile.length > 0 ? fromFile : HARDCODED_PROBLEMS;
+  }
+  return args.problemFilter ? base.filter((p) => p.id === args.problemFilter) : base;
+}
+
+function resolveRepeat(p: Problem, args: CliArgs): number {
+  const tierSpecific = args.tierRepeat[p.tier];
+  return typeof tierSpecific === "number" ? tierSpecific : args.repeat;
+}
+
 async function main() {
-  const { repeat, problemFilter } = parseArgs(process.argv.slice(2));
-  const targets = problemFilter ? PROBLEMS.filter((p) => p.id === problemFilter) : PROBLEMS;
+  const args = parseArgs(process.argv.slice(2));
+  const targets = selectProblems(args);
 
   if (targets.length === 0) {
-    console.error(`No problems match filter: ${problemFilter}`);
+    console.error(
+      `No problems match. source=${args.source} filter=${args.problemFilter ?? "(none)"}`,
+    );
     process.exit(2);
   }
 
+  const usingFile = loadProblemsFromRepo().length > 0 && args.source !== "hardcoded";
   console.log(`[info] curriculum repo: ${CURRICULUM_REPO}`);
   console.log(`[info] model: ${MODEL_TAG}   date: ${DATE_TAG}`);
-  console.log(`[info] problems: ${targets.length}  repeat: ${repeat}`);
+  console.log(
+    `[info] problems: ${targets.length}  source: ${usingFile ? "file" : "hardcoded"}  default repeat: ${args.repeat}`,
+  );
+  if (Object.keys(args.tierRepeat).length > 0) {
+    console.log(`[info] tier repeat overrides: ${JSON.stringify(args.tierRepeat)}`);
+  }
 
   const perProblemRuns: Array<{ p: Problem; persisted: PersistedRun[] }> = [];
 
   for (const p of targets) {
     const problemDir = join(CURRICULUM_REPO, "runs", DATE_TAG, MODEL_TAG, p.id);
-    console.log(`\n======== ${p.id} [${p.tier}] ========`);
+    const repeat = resolveRepeat(p, args);
+    console.log(`\n======== ${p.id} [${p.tier}]  (repeat=${repeat}) ========`);
     const persisted: PersistedRun[] = [];
     for (let i = 0; i < repeat; i++) {
       const runIndex = nextRunIndex(problemDir);
@@ -514,7 +631,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
