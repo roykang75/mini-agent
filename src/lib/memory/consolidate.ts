@@ -102,7 +102,11 @@ export async function consolidate(opts: ConsolidateOptions): Promise<Consolidate
   });
   const { systemPrompt } = splitPromptSections(promptRaw);
 
-  const userMessage = buildUserMessage(events, signals, meta);
+  // Optional: inject cell_catalog from canonical mapping (ADR-007 옵션 B).
+  // Sonnet sees existing canonical cell names and tends to reuse them, which
+  // reduces cell_id proliferation without requiring a prompt version bump.
+  const catalogText = await loadCellCatalog();
+  const userMessage = buildUserMessage(events, signals, meta, catalogText);
 
   // Try LLM path up to MAX_ATTEMPTS. Any failure → heuristic fallback.
   let lastErr: string | undefined;
@@ -205,6 +209,7 @@ function buildUserMessage(
   events: RawEvent[],
   signals: Signal[],
   meta: SessionMeta,
+  catalogText?: string,
 ): string {
   const rawBlock = events.map((e) => JSON.stringify(e)).join("\n");
   const signalsBlock = JSON.stringify(
@@ -225,6 +230,11 @@ function buildUserMessage(
     null,
     2,
   );
+
+  const catalogBlock = catalogText
+    ? `\n\n<cell_catalog>\n이 agent 가 과거에 관측된 canonical L3 cell 목록이다. 이번 세션의 l3_observations.cell_id 를 생성할 때, 의미가 겹치는 canonical 이 아래에 있으면 그대로 사용하라. 정말 새로운 L3 개념일 때만 신규 cell_id 를 만들어라.\n\n${catalogText}\n</cell_catalog>`
+    : "";
+
   return `<raw_session>
 ${rawBlock}
 </raw_session>
@@ -235,7 +245,27 @@ ${signalsBlock}
 
 <session_meta>
 ${metaBlock}
-</session_meta>`;
+</session_meta>${catalogBlock}`;
+}
+
+async function loadCellCatalog(): Promise<string | undefined> {
+  const path = process.env.CELL_CANONICAL_PATH;
+  if (!path) return undefined;
+  try {
+    const raw = await readFile(path, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      canonical_groups?: Array<{ canonical: string; domain: string; rationale?: string }>;
+    };
+    if (!Array.isArray(parsed.canonical_groups) || parsed.canonical_groups.length === 0) {
+      return undefined;
+    }
+    return parsed.canonical_groups
+      .map((g) => `- ${g.canonical}  (domain=${g.domain})${g.rationale ? `  — ${g.rationale}` : ""}`)
+      .join("\n");
+  } catch (e) {
+    log.warn({ event: "cell_catalog_load_failed", err: (e as Error).message, path }, "cell catalog load failed — proceeding without");
+    return undefined;
+  }
 }
 
 // ---------- LLM output parsing ----------
