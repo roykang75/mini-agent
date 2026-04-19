@@ -24,7 +24,7 @@ import { createLogger } from "../log";
 
 const log = createLogger("memory");
 
-const PROMPT_VERSION = "v1";
+const PROMPT_VERSION = "v2";  // ADR-007 — L3 observations section
 const MODEL_ID = process.env.CONSOLIDATE_MODEL ?? "claude-sonnet-4-6";
 const MAX_ATTEMPTS = 3;
 const EPISODE_BOUNDARY = "---EPISODE-BOUNDARY---";
@@ -50,6 +50,18 @@ export interface SourceRange {
   end: number;
 }
 
+export interface L3Observation {
+  cell_id: string;
+  domain: string;
+  default_behavior: string;
+  actual_behavior_this_session: string;
+  match: boolean;
+  advisor_called: boolean;
+  advisor_self_felt_need: boolean;
+  outcome_self_rubric: "correct" | "partial" | "wrong" | "uncertain";
+  confidence_self: number;
+}
+
 interface EpisodeFrontmatter {
   id: string;
   session_id: string;
@@ -64,6 +76,7 @@ interface EpisodeFrontmatter {
   boundary_reason: string;
   consolidation: { model: string; prompt_version: string; at: string };
   outcome: "resolved" | "open" | "failed";
+  l3_observations?: L3Observation[];
 }
 
 export interface ConsolidateResult {
@@ -96,14 +109,20 @@ export async function consolidate(opts: ConsolidateOptions): Promise<Consolidate
   const client = createLLMClient();
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const messages: Message[] = [{ role: "user", content: userMessage }];
-      const res = await client.chat({
-        model,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages,
-      });
-      const text = collectTextBlocks(res.content);
+      let text: string;
+      const mockResponse = process.env.MOCK_LLM_RESPONSE;
+      if (mockResponse !== undefined) {
+        text = mockResponse;
+      } else {
+        const messages: Message[] = [{ role: "user", content: userMessage }];
+        const res = await client.chat({
+          model,
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages,
+        });
+        text = collectTextBlocks(res.content);
+      }
       if (process.env.CONSOLIDATE_DEBUG) {
         log.debug(
           { event: "llm_output_debug", attempt, length: text.length, head: text.slice(0, 4000) },
@@ -384,6 +403,9 @@ function finalizeEpisode(
     outcome: (["resolved", "open", "failed"] as const).includes(p.frontmatter.outcome as "resolved")
       ? (p.frontmatter.outcome as "resolved" | "open" | "failed")
       : "open",
+    ...(Array.isArray(p.frontmatter.l3_observations)
+      ? { l3_observations: p.frontmatter.l3_observations as L3Observation[] }
+      : {}),
   };
   const slug = buildSlug(fm, id);
   return {
