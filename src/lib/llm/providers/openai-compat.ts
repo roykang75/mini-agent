@@ -81,10 +81,12 @@ export class OpenAICompatClient {
   }
 
   private buildPayload(req: LLMRequest, stream: boolean): Record<string, unknown> {
+    // gpt-5 / o-series 는 max_tokens 대신 max_completion_tokens 요구
+    const useCompletionTokens = /^(gpt-5|o[1-9])/.test(req.model);
     const payload: Record<string, unknown> = {
       model: req.model,
       messages: translateMessages(req.system, req.messages),
-      max_tokens: req.max_tokens,
+      [useCompletionTokens ? "max_completion_tokens" : "max_tokens"]: req.max_tokens,
       stream,
     };
     if (req.tools && req.tools.length > 0) {
