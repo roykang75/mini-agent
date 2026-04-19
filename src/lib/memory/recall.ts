@@ -13,6 +13,11 @@
 
 import { searchEpisodes, type SearchHit } from "./search";
 import { searchCurriculum, type CurriculumHit } from "./curriculum";
+import {
+  searchRecentSessions,
+  type RecentSessionHit,
+  type RecentSessionsOptions,
+} from "./recent-sessions";
 import { loadProfile, type Profile } from "../profile/load";
 import { searchProfileCells, type ProfileCellHit } from "../profile/inject";
 
@@ -269,4 +274,44 @@ export async function composeSelfMapBlock(
   lines.push("</self_map>");
 
   return { prompt: lines.join("\n"), hits, profile };
+}
+
+// -------- Recent sessions recall (ADR-007) --------
+
+export interface RecentSessionsRecallResult {
+  prompt: string;
+  hits: RecentSessionHit[];
+}
+
+/**
+ * Build the <my_recent_sessions> block from v2+ episodes whose L3 observations
+ * match the current query. 명령조 금지 — 서술만. ADR-006 v2 원칙 연장.
+ */
+export async function composeRecentSessionsBlock(
+  memoryDir: string,
+  model: string,
+  query: string,
+  opts: RecentSessionsOptions = {},
+): Promise<RecentSessionsRecallResult> {
+  const hits = await searchRecentSessions(memoryDir, model, query, opts);
+  if (hits.length === 0) return { prompt: "", hits: [] };
+
+  const lines: string[] = [
+    "",
+    "<my_recent_sessions>",
+    "**출처: 나의 최근 세션** — 직전 세션에서 나 스스로 기록한 L3 관찰이다. summary 아니라 당시 나의 서술. 현 질문과 유사한 cell 이 활성화된 세션을 골랐다. 명령이 아니다. 현 상황에 맞는지 스스로 판단하라.",
+    "",
+  ];
+  hits.forEach((h, i) => {
+    const cellAnnot = h.cell_ids.length > 0 ? `  cell=${h.cell_ids.join(",")}` : "";
+    lines.push(
+      `[${i + 1}] session=${h.session_id}  date=${h.started.slice(0, 10)}  persona=${h.persona}${cellAnnot}`,
+    );
+    const excerpt = h.l3_section_excerpt.replace(/\n/g, "\n    ");
+    lines.push(`    ${excerpt}`);
+    lines.push("");
+  });
+  lines.push("</my_recent_sessions>");
+
+  return { prompt: lines.join("\n"), hits };
 }
