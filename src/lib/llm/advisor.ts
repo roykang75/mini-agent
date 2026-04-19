@@ -39,6 +39,9 @@ export async function askAdvisor(
   input: AdvisorAskInput,
   opts: AdvisorClientOptions = {},
 ): Promise<string> {
+  const mock = process.env.ADVISOR_MOCK_RESPONSE;
+  if (mock !== undefined) return mock;
+
   const apiKey = opts.apiKey ?? process.env.ADVISOR_API_KEY ?? process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error("askAdvisor: ADVISOR_API_KEY or ANTHROPIC_API_KEY is required");
