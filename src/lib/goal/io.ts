@@ -147,3 +147,53 @@ export async function appendProgress(
   };
   await saveGoal(updated);
 }
+
+const ALLOWED_TRANSITIONS: Record<GoalStatus, GoalStatus[]> = {
+  draft: ["active", "aborted"],
+  active: ["paused", "completed", "failed", "aborted"],
+  paused: ["active", "aborted", "failed"],
+  completed: [],      // terminal
+  failed: [],         // terminal
+  aborted: [],        // terminal
+};
+
+export async function setStatus(
+  goal: LoadedGoal,
+  next: GoalStatus,
+  reason?: string,
+  now: Date = new Date(),
+): Promise<LoadedGoal> {
+  const current = goal.frontmatter.status;
+  const allowed = ALLOWED_TRANSITIONS[current] ?? [];
+  if (!allowed.includes(next)) {
+    throw new Error(
+      `goal ${goal.path}: invalid status transition ${current} → ${next}. allowed: [${allowed.join(", ")}]`,
+    );
+  }
+
+  const ts = now.toISOString();
+  const progressUpdate: ProgressState = {
+    ...goal.frontmatter.progress,
+    last_updated: ts,
+    ...(next === "active" && goal.frontmatter.progress.started_at === null
+      ? { started_at: ts }
+      : {}),
+  };
+
+  const updated: LoadedGoal = {
+    ...goal,
+    frontmatter: {
+      ...goal.frontmatter,
+      status: next,
+      progress: progressUpdate,
+    },
+  };
+  await saveGoal(updated);
+
+  // Also append a progress log entry.
+  const loaded = await loadGoal(goal.path);
+  const reasonStr = reason ? ` (${reason})` : "";
+  await appendProgress(loaded, `[status] ${current} → ${next}${reasonStr}`, now);
+
+  return await loadGoal(goal.path);
+}
