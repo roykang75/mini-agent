@@ -270,7 +270,10 @@ export class AgentInstance {
             CURRICULUM_DIR,
             MODEL_ID,
             userMessage,
-            { includeSelfMap: isProfileSelfMapOn() },
+            {
+              includeSelfMap: isProfileSelfMapOn(),
+              includeRecentSessions: true,
+            },
           );
         if (prompt.length > 0) {
           this.systemPrompt = `${this.systemPrompt}\n${prompt}`;
