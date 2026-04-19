@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 src/lib/skills/registry.generated.ts
 src/lib/souls/registry.generated.ts
+
+# oh-my-claudecode scratch
+.omc/
