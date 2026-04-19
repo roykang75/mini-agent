@@ -34,6 +34,13 @@ export interface AuditOpts {
   curriculumDir: string;
   window?: number;
   model?: string;
+  /**
+   * Optional canonical cell mapping. Keys are raw cell_ids as written in
+   * episodes/observations; values are canonical cell_ids to project them onto
+   * before aggregation. Missing keys pass through unchanged. Produced by
+   * `scripts/cell-canonicalize.ts`.
+   */
+  canonicalMapping?: Record<string, string>;
 }
 
 interface EpisodeL3 {
@@ -118,11 +125,19 @@ export async function auditRetrospection(opts: AuditOpts): Promise<AuditReport> 
     outcomes: Record<string, number>;
   }>();
 
+  const canon = (cid: string): string => opts.canonicalMapping?.[cid] ?? cid;
+
   for (const s of recent) {
-    const cells = new Set<string>([...s.l3.map((x) => x.cell_id), ...s.obs.map((x) => x.cell_id)]);
-    for (const cid of cells) {
-      const ob = s.obs.find((x) => x.cell_id === cid);
-      if (!ob) continue;
+    // Group observation cells by canonical id — multiple raw cells mapping to
+    // the same canonical in one session collapse to a single session tick for
+    // that canonical (avoids double-counting when Sonnet labeled the same L3
+    // activity with two slightly different cell_ids).
+    const canonicalCells = new Map<string, ObsCell>();
+    for (const ob of s.obs) {
+      const key = canon(ob.cell_id);
+      if (!canonicalCells.has(key)) canonicalCells.set(key, ob);
+    }
+    for (const [cid, ob] of canonicalCells) {
       const cur = cellMap.get(cid) ?? {
         sessions: 0, called: 0, needed_opus: 0, mismatch: 0, gap_sum: 0, gap_n: 0, outcomes: {},
       };
@@ -183,13 +198,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error("Set AGENT_MEMORY_DIR and AGENT_CURRICULUM_DIR envs.");
     process.exit(1);
   }
-  auditRetrospection({ memoryDir, curriculumDir, window: Number(process.env.AUDIT_WINDOW ?? 10) })
-    .then((r) => {
-      console.log(r.markdown);
-      process.exit(0);
-    })
-    .catch((e) => {
-      console.error(e);
-      process.exit(1);
+  const canonPath = process.env.CANON_MAPPING_PATH;
+  (async () => {
+    let canonicalMapping: Record<string, string> | undefined;
+    if (canonPath) {
+      const raw = await readFile(canonPath, "utf-8");
+      canonicalMapping = (JSON.parse(raw) as { mapping: Record<string, string> }).mapping;
+    }
+    const r = await auditRetrospection({
+      memoryDir,
+      curriculumDir,
+      window: Number(process.env.AUDIT_WINDOW ?? 10),
+      canonicalMapping,
     });
+    console.log(r.markdown);
+    process.exit(0);
+  })().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
 }
