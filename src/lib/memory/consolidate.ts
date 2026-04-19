@@ -322,6 +322,13 @@ export function validateEpisodes(
         );
       }
     }
+    // E9 (v2+): l3_observations is required array (0+ items ok)
+    const pv = ep.frontmatter.consolidation?.prompt_version;
+    if (pv === "v2") {
+      if (!Array.isArray(ep.frontmatter.l3_observations)) {
+        throw new Error(`E9 violated: episode[${i}] v2 missing l3_observations array`);
+      }
+    }
   }
 
   // E4: ranges sort + cover [1..totalLines] exactly, no gaps, no overlaps

@@ -118,7 +118,28 @@ classical math_proof 는 confident 로 가도 안전. non-classical 변형은 �
   assert(l3.match === true, "match field not true");
   assert(l3.confidence_self === 0.95, "confidence_self mismatch");
 
-  console.log("[OK] smoke-consolidate-v2 — 8 assertions passed");
+  // Negative: v2 prompt_version but l3_observations missing → should fallback
+  const badV2 = mockEpisodeText
+    .replace(/l3_observations:[\s\S]*?confidence_self: 0\.95\s*/, "");
+  process.env.MOCK_LLM_RESPONSE = badV2;
+
+  const tmp2 = join(tmpdir(), `smoke-consolidate-v2-neg-${Date.now()}`);
+  mkdirSync(join(tmp2, "memory", "prompts"), { recursive: true });
+  mkdirSync(join(tmp2, "memory", "raw", "2026", "04", "19"), { recursive: true });
+  mkdirSync(join(tmp2, "memory", "episodes"), { recursive: true });
+  cpSync(MEMORY_PROMPT_SRC, join(tmp2, "memory", "prompts", "consolidate-v2.md"));
+  const rawPath2 = join(tmp2, "memory", "raw", "2026", "04", "19", "0001.jsonl");
+  writeFileSync(rawPath2, rawLines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+
+  const result2 = await consolidate({ rawPath: rawPath2, memoryDir: join(tmp2, "memory") });
+  assert(result2.usedFallback, "expected fallback for missing l3_observations, got normal episode");
+  assert(
+    (result2.fallbackReason ?? "").includes("l3_observations"),
+    `expected fallback reason to mention l3_observations, got: ${result2.fallbackReason}`,
+  );
+  rmSync(tmp2, { recursive: true, force: true });
+
+  console.log("[OK] smoke-consolidate-v2 — 10 assertions passed");
   rmSync(tmp, { recursive: true, force: true });
 }
 
