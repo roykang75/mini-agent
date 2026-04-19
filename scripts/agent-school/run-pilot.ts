@@ -59,12 +59,14 @@ interface CliArgs {
   problemFilter: string | null;
   source: SourceMode;
   tierRepeat: Partial<Record<string, number>>;
+  profileSelfMap: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
   let repeat = 5;
   let problemFilter: string | null = null;
   let source: SourceMode = "auto";
+  let profileSelfMap = false;
   const tierRepeat: Partial<Record<string, number>> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -92,9 +94,15 @@ function parseArgs(argv: string[]): CliArgs {
         }
         tierRepeat[k] = Math.floor(n);
       }
+    } else if (a === "--profile") {
+      const v = (argv[++i] ?? "").toLowerCase();
+      if (v !== "on" && v !== "off") {
+        throw new Error(`--profile must be on|off, got ${v}`);
+      }
+      profileSelfMap = v === "on";
     }
   }
-  return { repeat, problemFilter, source, tierRepeat };
+  return { repeat, problemFilter, source, tierRepeat, profileSelfMap };
 }
 
 // -------- Problems --------
@@ -574,6 +582,10 @@ function resolveRepeat(p: Problem, args: CliArgs): number {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // ADR-006-v2 Phase 2: A/B 제어. on 이면 env 를 켜서 AgentInstance 가 self-map 을
+  // system prompt 에 inject 하게 함. 출력 디렉토리도 분기해 baseline (off) 과 섞이지 않음.
+  process.env.PROFILE_SELF_MAP = args.profileSelfMap ? "on" : "off";
+
   const targets = selectProblems(args);
 
   if (targets.length === 0) {
@@ -589,6 +601,7 @@ async function main() {
   console.log(
     `[info] problems: ${targets.length}  source: ${usingFile ? "file" : "hardcoded"}  default repeat: ${args.repeat}`,
   );
+  console.log(`[info] profile self-map: ${args.profileSelfMap ? "ON (branch B)" : "off (baseline)"}`);
   if (Object.keys(args.tierRepeat).length > 0) {
     console.log(`[info] tier repeat overrides: ${JSON.stringify(args.tierRepeat)}`);
   }
@@ -596,7 +609,8 @@ async function main() {
   const perProblemRuns: Array<{ p: Problem; persisted: PersistedRun[] }> = [];
 
   for (const p of targets) {
-    const problemDir = join(CURRICULUM_REPO, "runs", DATE_TAG, MODEL_TAG, p.id);
+    const baseDir = join(CURRICULUM_REPO, "runs", DATE_TAG, MODEL_TAG, p.id);
+    const problemDir = args.profileSelfMap ? join(baseDir, "profile-on") : baseDir;
     const repeat = resolveRepeat(p, args);
     console.log(`\n======== ${p.id} [${p.tier}]  (repeat=${repeat}) ========`);
     const persisted: PersistedRun[] = [];

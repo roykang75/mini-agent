@@ -53,6 +53,13 @@ const CURRICULUM_DIR_RAW =
   process.env.CURRICULUM_DIR ?? "/Users/roy/Workspace/agent/agent-curriculum";
 const CURRICULUM_DIR: string | null = CURRICULUM_DIR_RAW === "" ? null : CURRICULUM_DIR_RAW;
 
+// Self-map inject (ADR-006-v2 Phase 2). `PROFILE_SELF_MAP=on` 으로 활성. 기본은
+// off — Phase 2 A/B 에서 `off` branch 가 Phase 1.5 이전 동작과 동일하도록 보장.
+// env 는 매 receive() 에서 읽어 동일 프로세스 내 A/B 순차 실행을 허용.
+function isProfileSelfMapOn(): boolean {
+  return (process.env.PROFILE_SELF_MAP ?? "off").toLowerCase() === "on";
+}
+
 const client = createLLMClient();
 
 export const REQUEST_CREDENTIAL_TOOL = "request_credential";
@@ -257,12 +264,14 @@ export class AgentInstance {
     if (this.messages.length === 0) {
       const memoryDir = process.env.AGENT_MEMORY_DIR;
       if (memoryDir && shouldRecall(this.sid)) {
-        const { prompt, memoryHits, curriculumHits } = await composeCombinedRecall(
-          memoryDir,
-          CURRICULUM_DIR,
-          MODEL_ID,
-          userMessage,
-        );
+        const { prompt, memoryHits, curriculumHits, selfMapHits } =
+          await composeCombinedRecall(
+            memoryDir,
+            CURRICULUM_DIR,
+            MODEL_ID,
+            userMessage,
+            { includeSelfMap: isProfileSelfMapOn() },
+          );
         if (prompt.length > 0) {
           this.systemPrompt = `${this.systemPrompt}\n${prompt}`;
         }
@@ -278,6 +287,14 @@ export class AgentInstance {
             type: "curriculum_recalled",
             count: curriculumHits.length,
             problem_ids: curriculumHits.map((h) => h.record.problem_id),
+            model: MODEL_ID,
+          };
+        }
+        if (selfMapHits.length > 0) {
+          yield {
+            type: "self_map_recalled",
+            count: selfMapHits.length,
+            problem_ids: selfMapHits.map((h) => h.cell.problem_id),
             model: MODEL_ID,
           };
         }

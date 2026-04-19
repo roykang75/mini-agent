@@ -13,6 +13,8 @@
 
 import { searchEpisodes, type SearchHit } from "./search";
 import { searchCurriculum, type CurriculumHit } from "./curriculum";
+import { loadProfile, type Profile } from "../profile/load";
+import { searchProfileCells, type ProfileCellHit } from "../profile/inject";
 
 const DEFAULT_IDLE_MIN = Number(process.env.MEMORY_IDLE_MINUTES ?? 5);
 const DEFAULT_LIMIT = 3;
@@ -146,21 +148,38 @@ export interface CombinedRecallResult {
   prompt: string;
   memoryHits: SearchHit[];
   curriculumHits: CurriculumHit[];
+  selfMapHits: ProfileCellHit[];
+}
+
+export interface CombinedRecallOptions
+  extends RecallOptions,
+    CurriculumRecallOptions,
+    SelfMapOptions {
+  /**
+   * When set, load profile from `<curriculumDir>/profiles/<model>/self-map.md`
+   * and inject as `<self_map>` block. Requires `curriculumDir` to be non-null.
+   */
+  includeSelfMap?: boolean;
 }
 
 /**
- * Combine agent-memory (나의 경험) + agent-curriculum (훈련에서 배운 것) into a
- * single prompt tail. Either/both may be empty. Order: memory first (1-인칭),
- * then curriculum (3-인칭 training) — 현재 세션 맥락을 우선으로.
+ * Combine agent-memory (나의 경험) + agent-curriculum (훈련에서 배운 것) +
+ * profile self-map (관측된 나의 습관) into a single prompt tail.
  *
- * `curriculumDir === null` 이면 curriculum 생략 (repo 부재 환경에서 fallback).
+ * Order: memory (1-인칭 세션) → curriculum (3-인칭 훈련 개별 run) →
+ * self-map (3-인칭 집계된 습관). 구체 → 추상 순. LLM 이 블록 태그로 출처를
+ * 구분할 수 있도록 각 블록 본문 첫 줄에 출처 라벨을 명시한다.
+ *
+ * `curriculumDir === null` 이면 curriculum/self-map 둘 다 생략.
+ * `includeSelfMap === false` (default) 이면 self-map 생략 — Phase 2 A/B 에서
+ * `off` branch 가 기존 v1 동작과 완전히 동일하도록 보장.
  */
 export async function composeCombinedRecall(
   memoryDir: string,
   curriculumDir: string | null,
   model: string,
   query: string,
-  opts: RecallOptions & CurriculumRecallOptions = {},
+  opts: CombinedRecallOptions = {},
 ): Promise<CombinedRecallResult> {
   const { prompt: memoryPrompt, hits: memoryHits } = await composeRecall(
     memoryDir,
@@ -174,10 +193,80 @@ export async function composeCombinedRecall(
     curriculumPrompt = res.prompt;
     curriculumHits = res.hits;
   }
-  const parts = [memoryPrompt, curriculumPrompt].filter((p) => p.length > 0);
+
+  let selfMapPrompt = "";
+  let selfMapHits: ProfileCellHit[] = [];
+  if (curriculumDir && opts.includeSelfMap) {
+    const res = await composeSelfMapBlock(curriculumDir, model, query, opts);
+    selfMapPrompt = res.prompt;
+    selfMapHits = res.hits;
+  }
+
+  const parts = [memoryPrompt, curriculumPrompt, selfMapPrompt].filter(
+    (p) => p.length > 0,
+  );
   return {
     prompt: parts.join("\n"),
     memoryHits,
     curriculumHits,
+    selfMapHits,
   };
+}
+
+// -------- Self-map recall (ADR-006 v2 Phase 2) --------
+
+export interface SelfMapRecallResult {
+  prompt: string;
+  hits: ProfileCellHit[];
+  profile: Profile | null;
+}
+
+export interface SelfMapOptions {
+  limit?: number;
+}
+
+/**
+ * Build the self-map recall block. Profile 은 과거 N-run 의 집계된 habit 이며,
+ * 개별 run 보다 **상위 레이어의 자기-초상화** 를 준다.
+ *
+ * 명령조 금지 원칙 (ADR-006-v2): "호출하라" 가 아니라 "너의 관측된 습관은 이렇다,
+ * 현 상황에 맞는지 스스로 판단하라". 블록 본문 첫 줄에 그 원칙을 박음.
+ */
+export async function composeSelfMapBlock(
+  curriculumDir: string,
+  model: string,
+  query: string,
+  opts: SelfMapOptions = {},
+): Promise<SelfMapRecallResult> {
+  const profile = await loadProfile(model, curriculumDir);
+  if (!profile || profile.cells.length === 0) {
+    return { prompt: "", hits: [], profile: null };
+  }
+
+  const hits = searchProfileCells(profile, query, { limit: opts.limit ?? DEFAULT_LIMIT });
+  if (hits.length === 0) return { prompt: "", hits: [], profile };
+
+  const lines: string[] = [
+    "",
+    "<self_map>",
+    "**출처: 관측된 나의 습관** — 과거 N-run 훈련에서 집계된 너의 L3 default 다. **명령이 아니다.** 아래 cell 이 현재 질문과 유사하면, 네가 그런 상황에서 **실제로 어떻게 행동했는지** 와 rubric 기준이 어떻게 어긋났는지 보고, 이번엔 그 습관대로 갈지 재검토할지 **스스로 판단**하라. 습관과 다르게 가는 것도 허용된다.",
+    "",
+  ];
+  hits.forEach((h, i) => {
+    const c = h.cell;
+    lines.push(
+      `[${i + 1}] cell=${c.problem_id}  domain=${c.domain}  default_behavior=${c.default_behavior}`,
+    );
+    lines.push(
+      `    advisor_called=${c.advisor_called_rate.toFixed(3)}  needed=${c.advisor_needed_rate.toFixed(3)}  mismatch=${c.behavior_mismatch_rate.toFixed(3)}`,
+    );
+    lines.push(
+      `    correct=${c.correct_rate.toFixed(3)}  partial=${c.partial_rate.toFixed(3)}  wrong=${c.wrong_rate.toFixed(3)}  conf=${c.mean_confidence.toFixed(3)}  runs=${c.runs_total}`,
+    );
+    if (c.note) lines.push(`    note: ${c.note}`);
+    lines.push("");
+  });
+  lines.push("</self_map>");
+
+  return { prompt: lines.join("\n"), hits, profile };
 }
