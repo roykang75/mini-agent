@@ -154,6 +154,7 @@ export interface CombinedRecallResult {
   memoryHits: SearchHit[];
   curriculumHits: CurriculumHit[];
   selfMapHits: ProfileCellHit[];
+  recentSessionsHits: RecentSessionHit[];  // ADR-007
 }
 
 export interface CombinedRecallOptions
@@ -165,6 +166,7 @@ export interface CombinedRecallOptions
    * and inject as `<self_map>` block. Requires `curriculumDir` to be non-null.
    */
   includeSelfMap?: boolean;
+  includeRecentSessions?: boolean;   // ADR-007 — default true in callers
 }
 
 /**
@@ -207,7 +209,15 @@ export async function composeCombinedRecall(
     selfMapHits = res.hits;
   }
 
-  const parts = [memoryPrompt, curriculumPrompt, selfMapPrompt].filter(
+  let recentSessionsPrompt = "";
+  let recentSessionsHits: RecentSessionHit[] = [];
+  if (opts.includeRecentSessions !== false) {
+    const res = await composeRecentSessionsBlock(memoryDir, model, query, opts);
+    recentSessionsPrompt = res.prompt;
+    recentSessionsHits = res.hits;
+  }
+
+  const parts = [memoryPrompt, curriculumPrompt, selfMapPrompt, recentSessionsPrompt].filter(
     (p) => p.length > 0,
   );
   return {
@@ -215,6 +225,7 @@ export async function composeCombinedRecall(
     memoryHits,
     curriculumHits,
     selfMapHits,
+    recentSessionsHits,
   };
 }
 

@@ -148,7 +148,29 @@ async function main() {
   const res2 = await composeRecentSessionsBlock(memoryDir, "claude-sonnet-4-6", "자전거 수리", { limit: 3 });
   assert(res2.prompt === "", `expected empty prompt, got: ${res2.prompt}`);
 
-  console.log("[OK] smoke-recent-sessions-recall — 11 assertions passed");
+  // Test 6: composeCombinedRecall includes recent_sessions block by default
+  const { composeCombinedRecall } = await import("../src/lib/memory/recall");
+  const combined = await composeCombinedRecall(
+    memoryDir,
+    null,
+    "claude-sonnet-4-6",
+    "math proof",
+    { limit: 3 },
+  );
+  assert(combined.prompt.includes("<my_recent_sessions>"), "combined missing recent_sessions block");
+  assert(combined.recentSessionsHits.length > 0, "combined.recentSessionsHits empty");
+
+  // Test 7: flag off → no block
+  const combinedOff = await composeCombinedRecall(
+    memoryDir,
+    null,
+    "claude-sonnet-4-6",
+    "math proof",
+    { limit: 3, includeRecentSessions: false },
+  );
+  assert(!combinedOff.prompt.includes("<my_recent_sessions>"), "flag off did not suppress block");
+
+  console.log("[OK] smoke-recent-sessions-recall — 14 assertions passed");
   rmSync(tmp, { recursive: true, force: true });
 }
 
