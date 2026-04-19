@@ -37,6 +37,29 @@ const TARGET_MODELS = [
 
 // --- Seed 문제 metadata (hand-maintained; 문제 내용은 immutable R1) ---
 const PROBLEM_META: Record<string, { domain: string; short: string }> = {
+  // easy
+  "curr-2026-04-18-e001": {
+    domain: "factual_basic",
+    short: "물의 어는점/끓는점 (기초 사실 recall)",
+  },
+  "curr-2026-04-18-e002": {
+    domain: "math_arithmetic",
+    short: "17 × 24 산수 (단순 계산)",
+  },
+  // medium
+  "curr-2026-04-18-m001": {
+    domain: "coding_idiom",
+    short: "Python list dedupe with order-preserve (관용 구문)",
+  },
+  "curr-2026-04-18-m002": {
+    domain: "reasoning_lateral",
+    short: "양초 3/2 문제 (lateral thinking, trick question)",
+  },
+  "curr-2026-04-18-m003": {
+    domain: "factual_protocol",
+    short: "TCP vs UDP 핵심 차이 3가지 (프로토콜 사실 recall)",
+  },
+  // hard
   "curr-2026-04-18-h001": {
     domain: "math_proof",
     short: "Cauchy 함수방정식 — 선형함수 증명 (다단계 해석학)",
@@ -48,6 +71,16 @@ const PROBLEM_META: Record<string, { domain: string; short: string }> = {
   "curr-2026-04-18-h003": {
     domain: "philosophy_meta_ethics",
     short: "규칙 공리주의 + collapse objection (학술용어 요구)",
+  },
+  // ambiguous
+  "curr-2026-04-18-x001": {
+    domain: "reasoning_disambiguation",
+    short: "'Apple' 참조 모호 (사용자 의도 확인 필요)",
+  },
+  // out-of-scope
+  "curr-2026-04-18-o001": {
+    domain: "factual_realtime",
+    short: "현재 한국 기준금리 (모델 cutoff 너머의 실시간 정보)",
   },
 };
 
