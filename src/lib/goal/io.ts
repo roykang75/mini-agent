@@ -100,3 +100,50 @@ function validateCriterion(c: CompletionCriterion, path: string): void {
     }
   }
 }
+
+/**
+ * Append a line to the goal's "## 진행 로그" section. 없으면 섹션 자체를 append.
+ * Atomic — reuses saveGoal.
+ */
+export async function appendProgress(
+  goal: LoadedGoal,
+  line: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const ts = now.toISOString();
+  const entry = `- ${ts} ${line.trim()}`;
+
+  const marker = "## 진행 로그";
+  let newBody: string;
+  const idx = goal.body.indexOf(marker);
+  if (idx === -1) {
+    // No section — append at end.
+    newBody = goal.body.trimEnd() + `\n\n${marker}\n\n${entry}\n`;
+  } else {
+    // Find end of section (next "## " heading or EOF).
+    const afterHeading = idx + marker.length;
+    const rest = goal.body.slice(afterHeading);
+    const nextSectionMatch = rest.match(/\n## [^\n]/);
+    const insertAt =
+      nextSectionMatch && nextSectionMatch.index !== undefined
+        ? afterHeading + nextSectionMatch.index
+        : goal.body.length;
+    const before = goal.body.slice(0, insertAt).trimEnd();
+    const after = goal.body.slice(insertAt);
+    newBody = `${before}\n${entry}\n${after.startsWith("\n") ? after : "\n" + after}`;
+  }
+
+  // Update progress timestamps in frontmatter.
+  const updated: LoadedGoal = {
+    ...goal,
+    body: newBody,
+    frontmatter: {
+      ...goal.frontmatter,
+      progress: {
+        ...goal.frontmatter.progress,
+        last_updated: ts,
+      },
+    },
+  };
+  await saveGoal(updated);
+}
