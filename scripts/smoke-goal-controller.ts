@@ -86,7 +86,7 @@ async function main() {
     budget: { ...DEFAULT_BUDGET, max_iterations: 5 },
     hil_policy: "balanced",
     autonomy_config: DEFAULT_AUTONOMY,
-    progress: { ...DEFAULT_PROGRESS, started_at: "2026-04-19T22:00:00Z" },
+    progress: { ...DEFAULT_PROGRESS, started_at: null },
     parent_goal: null,
     persona: "autonomous-executor",
   };
