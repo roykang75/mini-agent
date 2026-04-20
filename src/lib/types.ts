@@ -5,6 +5,14 @@ export type AgentEvent =
   | { type: "self_map_recalled"; count: number; problem_ids: string[]; model: string }
   | { type: "thinking"; content: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
+  | {
+      type: "chat_usage";
+      model: string;
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    }
   | { type: "tool_approval_request"; sessionId: string; toolCalls: PendingToolCall[] }
   | { type: "tool_result"; name: string; output: string }
   | { type: "tool_rejected"; name: string }

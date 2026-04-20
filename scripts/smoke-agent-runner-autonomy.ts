@@ -289,8 +289,89 @@ async function main() {
     assert(out.error === undefined, "E: runner does not crash on reload failure");
   }
 
+  // ─── Scenario F: chat_usage 이벤트 집계 ───
+  {
+    const autonomy: AutonomyConfig = {
+      allow_fs_write: ["**"],
+      deny_fs_write: [],
+      allow_shell: false,
+      require_hil_before: [],
+    };
+    const goal = makeLoadedGoal(autonomy, goalPath);
+
+    const agent = fakeAgent([
+      [
+        {
+          type: "chat_usage",
+          model: "claude-sonnet-4-6",
+          input_tokens: 500,
+          output_tokens: 200,
+          cache_creation_input_tokens: 100,
+          cache_read_input_tokens: 300,
+        },
+        { type: "message", content: "done" },
+        { type: "done" },
+      ],
+    ]);
+
+    const runner = createAgentRunner(
+      {},
+      { summonFn: async () => agent, loadAutonomyFn: async () => autonomy },
+    );
+    const out = await runner({
+      goal,
+      iteration: 1,
+      userMessage: "go",
+      systemTail: "SYSTEM",
+    });
+    assert(out.tokens_out === 200, `F: tokens_out=200, got ${out.tokens_out}`);
+    assert(
+      out.tokens_in === 500 + 100 + 300,
+      `F: tokens_in=input+cache_creation+cache_read=900, got ${out.tokens_in}`,
+    );
+    assert(out.model === "claude-sonnet-4-6", "F: model propagated");
+  }
+
+  // ─── Scenario G: 여러 chat_usage 합산 ───
+  {
+    const autonomy: AutonomyConfig = {
+      allow_fs_write: ["**"],
+      deny_fs_write: [],
+      allow_shell: false,
+      require_hil_before: [],
+    };
+    const goal = makeLoadedGoal(autonomy, goalPath);
+
+    const agent = fakeAgent([
+      [
+        { type: "chat_usage", model: "claude-sonnet-4-6", input_tokens: 100, output_tokens: 50 },
+        { type: "tool_call", name: "read_file", args: { path: "x" } },
+        toolApproval("read_file", { path: "x" }),
+      ],
+      [
+        { type: "tool_result", name: "read_file", output: "content" },
+        { type: "chat_usage", model: "claude-sonnet-4-6", input_tokens: 200, output_tokens: 80 },
+        { type: "message", content: "final" },
+        { type: "done" },
+      ],
+    ]);
+
+    const runner = createAgentRunner(
+      {},
+      { summonFn: async () => agent, loadAutonomyFn: async () => autonomy },
+    );
+    const out = await runner({
+      goal,
+      iteration: 1,
+      userMessage: "go",
+      systemTail: "SYSTEM",
+    });
+    assert(out.tokens_in === 300, `G: 100+200=300, got ${out.tokens_in}`);
+    assert(out.tokens_out === 130, `G: 50+80=130, got ${out.tokens_out}`);
+  }
+
   rmSync(tmp, { recursive: true, force: true });
-  console.log("[OK] smoke-agent-runner-autonomy — 5 scenarios, 15 assertions passed");
+  console.log("[OK] smoke-agent-runner-autonomy — 7 scenarios, 20 assertions passed");
 }
 
 main().then(() => process.exit(0));

@@ -116,6 +116,12 @@ export function createAgentRunner(
     let assistantText = "";
     let hil: IterationOutput["hil_checkpoint_triggered"];
     let errorMsg: string | undefined;
+    // LLM 사용량 집계 — 한 iter 안 여러 번의 chat turn 을 전부 합산.
+    let tokensIn = 0;
+    let tokensOut = 0;
+    let cacheCreation = 0;
+    let cacheRead = 0;
+    let lastModel = DEFAULT_MODEL;
 
     let gen: AsyncGenerator<AgentEvent> = agent.receive(composed, personaReq) as AsyncGenerator<AgentEvent>;
     let approvalsGranted = 0;
@@ -218,6 +224,14 @@ export function createAgentRunner(
             }
             break; // inner for-await — 다음 이벤트는 resume 후 새 gen 에서.
           }
+          case "chat_usage": {
+            tokensIn += ev.input_tokens;
+            tokensOut += ev.output_tokens;
+            cacheCreation += ev.cache_creation_input_tokens ?? 0;
+            cacheRead += ev.cache_read_input_tokens ?? 0;
+            lastModel = ev.model;
+            break;
+          }
           case "error": {
             errorMsg = ev.message;
             // 에러 이후 이벤트는 전부 무시하고 runner 를 즉시 종료한다.
@@ -239,9 +253,13 @@ export function createAgentRunner(
 
     return {
       iteration_summary: assistantText.trim().slice(0, 2000) || "(empty agent response)",
-      tokens_in: 0,
-      tokens_out: 0,
-      model: DEFAULT_MODEL,
+      // 입력 토큰 = 실제 LLM 프롬프트 전체 (system + history + cache). cache 분도
+      // 합산 — budget 의 max_tokens 는 "LLM 이 처리한 총 토큰" 관점.
+      // 비용 계산은 BudgetTracker.usdForChat 의 MODEL_PRICES 로, 현재는 input 요율
+      // 하나만 적용 (cache_read 할인 미반영) — 이 정도 overestimate 는 안전망.
+      tokens_in: tokensIn + cacheCreation + cacheRead,
+      tokens_out: tokensOut,
+      model: lastModel,
       hil_checkpoint_triggered: hil,
       error: errorMsg,
     };

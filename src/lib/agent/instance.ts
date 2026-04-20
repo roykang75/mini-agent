@@ -467,6 +467,17 @@ export class AgentInstance {
       }
       if (!response) throw new Error("agent: chatStream ended without done event");
 
+      // Token / cache usage — budget 계산과 관찰성의 기초.
+      // raw append middleware 가 자동으로 이 이벤트를 memory raw 에도 기록.
+      yield {
+        type: "chat_usage",
+        model: MODEL_ID,
+        input_tokens: response.usage.input_tokens,
+        output_tokens: response.usage.output_tokens,
+        cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
+        cache_read_input_tokens: response.usage.cache_read_input_tokens,
+      };
+
       this.messages.push({ role: "assistant", content: response.content });
 
       for (const block of response.content) {
