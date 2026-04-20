@@ -6,20 +6,22 @@
  * Handler 는 agent 에게 "paused 요청을 접수했다" 는 tool_result 를 돌려준다.
  */
 
-export interface HilCheckpointArgs {
-  reason: string;
-  proposed_action: string;
-  goal_id: string;
-}
+import { z } from "zod";
 
-export interface HilCheckpointResult {
-  acknowledged: boolean;
-  message: string;
-}
+const InputSchema = z.object({
+  reason: z.string(),
+  proposed_action: z.string(),
+  goal_id: z.string(),
+});
+type HilCheckpointInput = z.infer<typeof InputSchema>;
 
-export async function handler(args: HilCheckpointArgs): Promise<HilCheckpointResult> {
-  return {
+export async function execute(args: HilCheckpointInput): Promise<string> {
+  const { reason, proposed_action, goal_id } = InputSchema.parse(args);
+  return JSON.stringify({
     acknowledged: true,
-    message: `HIL checkpoint 요청 접수: goal_id=${args.goal_id} reason="${args.reason}". Goal 은 paused 로 전이될 것이고, Roy 가 승인 후 resume 된다. 이 iteration 은 여기서 종료하라.`,
-  };
+    goal_id,
+    reason,
+    proposed_action,
+    message: `HIL checkpoint 요청 접수: goal_id=${goal_id} reason="${reason}". Goal 은 paused 로 전이되고, Roy 가 승인 후 resume 된다. 이 iteration 은 여기서 종료하라.`,
+  });
 }
