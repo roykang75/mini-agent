@@ -75,7 +75,7 @@ export async function runGoal(
       : now(),
   );
 
-  const systemTail = buildGoalSystemTail(goal);
+  const systemTail = buildGoalSystemTail(goal, opts.evaluatorContext.workDir);
   let lastSummary: string | undefined;
   let lastHint: string | undefined;
 

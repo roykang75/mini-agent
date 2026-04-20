@@ -52,6 +52,16 @@ export interface AgentRunnerOptions {
   baseSid?: string;
   /** Persona override (PersonaName). Default: goal.frontmatter.persona. */
   personaOverride?: string;
+  /**
+   * Tool-approval path 정규화 기준 cwd. GOAL_WORK_DIR env 또는 CLI/route 가
+   * 전달. 없으면 process.env.GOAL_WORK_DIR → process.cwd() 로 fallback.
+   *
+   * 이 값이 agent 가 쓴 경로를 어떤 상대 공간에서 해석할지를 결정한다.
+   * 예) workDir=/Users/roy/Workspace/agent, agent path=absolute agent-memory
+   * path → relative = "agent-memory/..." → allow_fs_write 매치 OK.
+   * workDir 이 mini-agent 였다면 "../agent-memory/..." 가 되어 escapes workdir.
+   */
+  workDir?: string;
 }
 
 /** Minimal agent shape that the runner actually uses. Allows fakes in smoke tests. */
@@ -82,6 +92,7 @@ export function createAgentRunner(
 ): AgentRunner {
   const summon = deps.summonFn ?? ((sid: string) => summonAgent(sid));
   const loadAutonomy = deps.loadAutonomyFn ?? loadCurrentAutonomy;
+  const approvalCwd = opts.workDir ?? process.env.GOAL_WORK_DIR ?? process.cwd();
   return async (input: IterationInput): Promise<IterationOutput> => {
     const base = opts.baseSid ?? input.goal.frontmatter.id;
     const sid = `${base}/iter-${input.iteration}`;
@@ -161,7 +172,7 @@ export function createAgentRunner(
               pendingSid = null;
               break;
             }
-            const decision = decideToolApproval(ev.toolCalls, autonomy);
+            const decision = decideToolApproval(ev.toolCalls, autonomy, { cwd: approvalCwd });
 
             log.info(
               {

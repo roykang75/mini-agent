@@ -57,7 +57,7 @@ export async function POST(
   activeRuns.add(slug);
   // Fire-and-forget — Next.js dev 에서 Node process 가 long-lived 라 OK.
   void runGoal(reloaded.path, {
-    runIteration: createAgentRunner({}),
+    runIteration: createAgentRunner({ workDir }),
     evaluatorContext: { workDir },
   })
     .then((result) => {

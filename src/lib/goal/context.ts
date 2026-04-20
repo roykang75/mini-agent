@@ -17,7 +17,7 @@ export interface IterationContext {
   completion_check_hint?: string;
 }
 
-export function buildGoalSystemTail(goal: LoadedGoal): string {
+export function buildGoalSystemTail(goal: LoadedGoal, workDir?: string): string {
   const fm = goal.frontmatter;
   const criteriaList = fm.completion_criteria
     .map((c, i) => {
@@ -67,6 +67,14 @@ ${criteriaList}
 - **쓰기 금지 경로**: ${denyFs}
 - **Shell**: ${shell}
 - **HIL 필수 action**: ${hilBefore} → 이 중 하나를 수행해야 하면 \`hil_checkpoint\` skill 을 먼저 호출해 Roy 의 승인을 구할 것.
+
+## 경로 규칙 (중요)
+
+- **정책 판정 기준 cwd**: \`${workDir ?? "(unspecified — process.cwd)"}\`
+- 위 allow/deny 글로브는 **이 cwd 기준 상대경로** 로 매칭된다.
+- **절대 경로를 써도 된다** — tool-approval 이 자동으로 cwd 기준 상대화한 뒤 매칭.
+- **\`..\` 로 시작하는 경로는 금지** — cwd 밖으로 벗어나면 즉시 HIL. 상위 디렉토리가 필요하면 절대 경로로 명시.
+- 예) 허용 = \`agent-memory/knowledge/**\`, cwd = \`${workDir ?? "/path/to/workdir"}\` → agent 는 \`agent-memory/knowledge/x.md\` 또는 \`${workDir ? `${workDir}/agent-memory/knowledge/x.md` : "/absolute/agent-memory/knowledge/x.md"}\` 형태로 경로 지정.
 
 ## 행동 규약
 

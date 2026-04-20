@@ -54,7 +54,7 @@ async function main() {
 
   const started = Date.now();
   const result = await runGoal(goalPath, {
-    runIteration: createAgentRunner({}),
+    runIteration: createAgentRunner({ workDir }),
     evaluatorContext: { workDir },
   });
   const elapsedSec = ((Date.now() - started) / 1000).toFixed(1);
