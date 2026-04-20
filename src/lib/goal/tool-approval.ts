@@ -117,6 +117,11 @@ function evaluateOne(tc: PendingToolCall, autonomy: AutonomyConfig, cwd: string)
   if (tc.name === "run_command") {
     if (autonomy.allow_shell === false) return { allow: false, reason: "shell disabled" };
     if (autonomy.allow_shell === true) return { allow: true, reason: "shell open" };
+    // 주의: 여기의 string[] allowlist 는 "첫 토큰" 만 매칭한다.
+    // `grep foo && rm -rf /` / `bash -c '...'` / `FOO=bar rm file` 처럼 shell
+    // operator 나 wrapper 로 쉽게 우회된다. 즉 이 경로는 "완전 open 보다 약간의
+    // hint" 수준의 가드일 뿐 안전 샌드박스가 아니다. 안전 실행이 필요하면
+    // run_command 를 require_hil_before 로 돌려 HIL 을 강제하라.
     const cmd = typeof tc.args.command === "string" ? tc.args.command.trim() : "";
     if (!cmd) return { allow: false, reason: "run_command missing command arg" };
     const first = cmd.split(/\s+/)[0]!;

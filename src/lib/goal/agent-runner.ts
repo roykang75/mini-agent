@@ -39,6 +39,12 @@ import type { PersonaName } from "../souls/registry.generated";
 import { createLogger } from "../log";
 
 const DEFAULT_MODEL = process.env.LLM_MODEL ?? "claude-sonnet-4-6";
+/**
+ * 한 iter 안에서 허용되는 auto-approve resume 최대 횟수. 이 상한을 넘으면
+ * agent 가 retry loop 에 갇힌 것으로 간주하고 error 로 iter 종료.
+ * env `APPROVAL_SAFETY_LIMIT` 로 override 가능 (기본 32).
+ */
+const APPROVAL_SAFETY_LIMIT = Number(process.env.APPROVAL_SAFETY_LIMIT ?? 32);
 const log = createLogger("agent");
 
 export interface AgentRunnerOptions {
@@ -95,7 +101,6 @@ export function createAgentRunner(
 
     let gen: AsyncGenerator<AgentEvent> = agent.receive(composed, personaReq) as AsyncGenerator<AgentEvent>;
     let approvalsGranted = 0;
-    const APPROVAL_SAFETY_LIMIT = 32; // 한 iter 안에서 resume 횟수 상한 — 무한 루프 방지
 
     outer: while (true) {
       let pendingSid: string | null = null;
@@ -168,6 +173,16 @@ export function createAgentRunner(
             if (decision.decision === "auto_approve") {
               approvalsGranted++;
               if (approvalsGranted > APPROVAL_SAFETY_LIMIT) {
+                log.warn(
+                  {
+                    event: "approval_safety_limit_exceeded",
+                    limit: APPROVAL_SAFETY_LIMIT,
+                    goal_id: input.goal.frontmatter.id,
+                    iteration: input.iteration,
+                    sid,
+                  },
+                  "resume 상한 초과 — retry loop 로 간주, iter 종료",
+                );
                 errorMsg = `approval_safety_limit exceeded (${APPROVAL_SAFETY_LIMIT})`;
                 break outer;
               }
@@ -187,7 +202,8 @@ export function createAgentRunner(
           }
           case "error": {
             errorMsg = ev.message;
-            break;
+            // 에러 이후 이벤트는 전부 무시하고 runner 를 즉시 종료한다.
+            break outer;
           }
           default:
             // persona_resolved / memory_recalled / curriculum_recalled /
