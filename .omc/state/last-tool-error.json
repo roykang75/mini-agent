@@ -1,7 +1,0 @@
-{
-  "tool_name": "mcp__plugin_playwright_playwright__browser_navigate",
-  "tool_input_preview": "{\"url\":\"http://localhost:3000\"}",
-  "error": "### Error\nTimeoutError: browserBackend.callTool: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://localhost:3000/\", waiting until \"domcontentloaded\"",
-  "timestamp": "2026-04-07T15:19:19.662Z",
-  "retry_count": 1
-}
