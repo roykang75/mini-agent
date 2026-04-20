@@ -31,7 +31,7 @@ import {
   type ApprovalDecision,
 } from "./tool-approval";
 import type { AutonomyConfig } from "./types";
-import { summonAgent } from "../agent/registry";
+import { disposeAgent, summonAgent } from "../agent/registry";
 import type { AgentInstance } from "../agent/instance";
 import type { AgentEvent } from "../types";
 import type { SoulRequest } from "../souls/loader";
@@ -86,6 +86,12 @@ export function createAgentRunner(
     const base = opts.baseSid ?? input.goal.frontmatter.id;
     const sid = `${base}/iter-${input.iteration}`;
 
+    // Autonomous 경로는 매 iter 를 fresh agent 로 시작한다.
+    // 이전 paused 에서 남은 pending / messages 가 Redis 에서 hydrate 되면
+    // receive() 가 즉시 "awaiting approval" error 로 끝나 iter 가 0 tool 로 빠진다.
+    // (같은 sid 의 goal-level idempotency 는 goal.md 의 frontmatter/body 가 담당.)
+    // DI 주입된 summonFn (smoke) 은 이 삭제 영향 없음.
+    if (!deps.summonFn) await disposeAgent(sid);
     const agent = await summon(sid);
 
     const personaRaw = opts.personaOverride ?? input.goal.frontmatter.persona;
