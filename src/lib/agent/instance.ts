@@ -65,13 +65,18 @@ const client = createLLMClient();
 export const REQUEST_CREDENTIAL_TOOL = "request_credential";
 export const ASK_ADVISOR_TOOL = "ask_advisor";
 
-/** Max allowed identical (name, args) tool attempts within a single agent session. */
-export const RETRY_LIMIT = Number(process.env.RETRY_LIMIT ?? 3);
+import { loadRuntimeLimits } from "../config/limits";
 
-/** Max advisor calls per AgentInstance lifetime. Infinity when env unset. */
-export const ADVISOR_CALL_LIMIT = process.env.ADVISOR_CALL_LIMIT
-  ? Number(process.env.ADVISOR_CALL_LIMIT)
-  : Infinity;
+/**
+ * Retry 상수들은 runtime-limits config 에서 온다. env (RETRY_LIMIT /
+ * ADVISOR_CALL_LIMIT) 가 있으면 override. 값 source 는 `config/runtime-limits.json`.
+ * 향후 UI 편집 지점.
+ */
+const _limits = loadRuntimeLimits();
+/** Max allowed identical (name, args) tool attempts within a single agent session. */
+export const RETRY_LIMIT = _limits.retry.tool_call_retry_limit;
+/** Max advisor calls per AgentInstance lifetime. Infinity = 무제한. */
+export const ADVISOR_CALL_LIMIT = _limits.retry.advisor_call_limit;
 
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

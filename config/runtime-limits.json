@@ -1,0 +1,10 @@
+{
+  "$schema": "./runtime-limits.schema.json",
+  "_doc": "Agent runtime limits. 향후 UI 에서 편집. Source of truth — code 상수/env 는 backward compat 용 fallback.",
+  "retry": {
+    "tool_call_retry_limit": 3,
+    "advisor_call_limit": null,
+    "goal_retry_max": 3,
+    "approval_safety_limit": 32
+  }
+}

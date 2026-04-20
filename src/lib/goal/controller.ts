@@ -16,7 +16,7 @@ import { evaluateCompletion } from "./completion/evaluate";
 import type { EvaluatorContext } from "./completion/types";
 import { BudgetTracker, type BudgetBreachReason } from "./budget";
 import { buildGoalSystemTail, buildIterationUserMessage, type IterationContext } from "./context";
-import { MAX_RETRY_COUNT } from "./types";
+import { loadRuntimeLimits } from "../config/limits";
 
 export interface IterationInput {
   goal: LoadedGoal;
@@ -61,9 +61,10 @@ export async function runGoal(
   if (goal.frontmatter.status !== "active") {
     throw new Error(`runGoal: goal status is "${goal.frontmatter.status}", must be "active"`);
   }
-  if (goal.frontmatter.progress.retry_count > MAX_RETRY_COUNT) {
+  const goalRetryMax = loadRuntimeLimits().retry.goal_retry_max;
+  if (goal.frontmatter.progress.retry_count > goalRetryMax) {
     throw new Error(
-      `runGoal: retry_count ${goal.frontmatter.progress.retry_count} > MAX_RETRY_COUNT ${MAX_RETRY_COUNT}. Human must reset.`,
+      `runGoal: retry_count ${goal.frontmatter.progress.retry_count} > goal_retry_max ${goalRetryMax}. Human must reset.`,
     );
   }
 

@@ -38,13 +38,14 @@ import type { SoulRequest } from "../souls/loader";
 import type { PersonaName } from "../souls/registry.generated";
 import { createLogger } from "../log";
 
+import { loadRuntimeLimits } from "../config/limits";
+
 const DEFAULT_MODEL = process.env.LLM_MODEL ?? "claude-sonnet-4-6";
 /**
- * 한 iter 안에서 허용되는 auto-approve resume 최대 횟수. 이 상한을 넘으면
- * agent 가 retry loop 에 갇힌 것으로 간주하고 error 로 iter 종료.
- * env `APPROVAL_SAFETY_LIMIT` 로 override 가능 (기본 32).
+ * 한 iter 안에서 허용되는 auto-approve resume 최대 횟수. runtime-limits config
+ * 에서 조회. env APPROVAL_SAFETY_LIMIT 도 override 가능 (loader 내부).
  */
-const APPROVAL_SAFETY_LIMIT = Number(process.env.APPROVAL_SAFETY_LIMIT ?? 32);
+const APPROVAL_SAFETY_LIMIT = loadRuntimeLimits().retry.approval_safety_limit;
 const log = createLogger("agent");
 
 export interface AgentRunnerOptions {
