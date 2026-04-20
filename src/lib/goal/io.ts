@@ -197,3 +197,37 @@ export async function setStatus(
 
   return await loadGoal(goal.path);
 }
+
+/**
+ * Reset execution progress — Roy 가 paused 된 goal 을 "새 run 으로 재시작"
+ * 할 때 사용. started_at/iterations/tokens/usd 를 0/null 로 클리어하여
+ * BudgetTracker 가 새 wall-time clock 으로 출발하게 한다.
+ *
+ * retry_count 는 보존 — 재시도 상한은 누적 기준.
+ * 진행 로그에 `[reset]` 라인 append.
+ */
+export async function resetProgress(
+  goal: LoadedGoal,
+  now: Date = new Date(),
+): Promise<LoadedGoal> {
+  const ts = now.toISOString();
+  const cleared: ProgressState = {
+    iterations: 0,
+    tokens_used: 0,
+    usd_spent: 0,
+    started_at: null,
+    last_updated: ts,
+    retry_count: goal.frontmatter.progress.retry_count,
+  };
+  const updated: LoadedGoal = {
+    ...goal,
+    frontmatter: {
+      ...goal.frontmatter,
+      progress: cleared,
+    },
+  };
+  await saveGoal(updated);
+  const loaded = await loadGoal(goal.path);
+  await appendProgress(loaded, `[reset] progress cleared`, now);
+  return await loadGoal(goal.path);
+}

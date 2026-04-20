@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 
 import { loadGoalBySlug } from "@/lib/goal/list";
-import { loadGoal, setStatus } from "@/lib/goal/io";
+import { loadGoal, resetProgress, setStatus } from "@/lib/goal/io";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,12 @@ export async function POST(
   }
   const reloaded = await loadGoal(goal.path);
   try {
-    await setStatus(reloaded, "active", "UI reset (human approval)");
+    // 1) progress 클리어 (started_at/iterations/usd/tokens → 0). retry_count 보존.
+    //    이게 없으면 이전 started_at 이 유지되어 BudgetTracker 가 옛 wall clock 으로
+    //    출발 → 즉시 wall_time exceeded 루프.
+    const afterReset = await resetProgress(reloaded);
+    // 2) paused → active 전이.
+    await setStatus(afterReset, "active", "UI reset (human approval)");
   } catch (e) {
     return NextResponse.json(
       { error: `setStatus failed: ${(e as Error).message}` },
