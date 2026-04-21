@@ -554,6 +554,20 @@ export class AgentInstance {
     };
   }
 
+  /**
+   * Clear any pending tool-approval state without wiping messages.
+   *
+   * Used by goal-runner before starting a new iteration: 같은 AgentInstance 가
+   * goal 의 모든 iter 동안 이어지므로 (ADR-009 Amendment 2026-04-21), 이전 iter
+   * 가 HIL 로 paused 된 뒤 Roy 가 Reset → 재실행할 때 stale pending 잔존을 방지.
+   *
+   * disposeAgent 와 다른 점: messages / systemPrompt / advisorCalls 등 "나" 의
+   * working memory 는 보존 — iter 간 사고 궤적을 끊지 않는다.
+   */
+  clearPending(): void {
+    this.pending = null;
+  }
+
   /** Test-only — reset messages so a fresh receive() starts clean. */
   __resetForTest(): void {
     this.messages = [];

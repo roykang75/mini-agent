@@ -31,7 +31,7 @@ import {
   type ApprovalDecision,
 } from "./tool-approval";
 import type { AutonomyConfig } from "./types";
-import { disposeAgent, summonAgent } from "../agent/registry";
+import { summonAgent } from "../agent/registry";
 import type { AgentInstance } from "../agent/instance";
 import type { AgentEvent } from "../types";
 import type { SoulRequest } from "../souls/loader";
@@ -73,6 +73,8 @@ export interface AgentLike {
     approved: boolean,
     credentials?: Record<string, string>,
   ): AsyncGenerator<AgentEvent>;
+  /** ADR-009 Amendment 2026-04-21 — goal-level 지속 agent 에서 iter 시작 시 호출. */
+  clearPending?(): void;
 }
 
 export interface AgentRunnerDeps {
@@ -96,15 +98,14 @@ export function createAgentRunner(
   const approvalCwd = opts.workDir ?? process.env.GOAL_WORK_DIR ?? process.cwd();
   return async (input: IterationInput): Promise<IterationOutput> => {
     const base = opts.baseSid ?? input.goal.frontmatter.id;
-    const sid = `${base}/iter-${input.iteration}`;
-
-    // Autonomous 경로는 매 iter 를 fresh agent 로 시작한다.
-    // 이전 paused 에서 남은 pending / messages 가 Redis 에서 hydrate 되면
-    // receive() 가 즉시 "awaiting approval" error 로 끝나 iter 가 0 tool 로 빠진다.
-    // (같은 sid 의 goal-level idempotency 는 goal.md 의 frontmatter/body 가 담당.)
-    // DI 주입된 summonFn (smoke) 은 이 삭제 영향 없음.
-    if (!deps.summonFn) await disposeAgent(sid);
+    // ADR-009 Amendment 2026-04-21 — sid 는 goal 전체에 걸쳐 고정. 이전 구현은
+    // `${base}/iter-${N}` 로 per-iter fresh 였고 disposeAgent 로 매 iter 휘발화.
+    // 그 결과 agent 의 messages / 사고 궤적이 iter 간 완전 단절 → 자기 실수 수정
+    // 불가. 지금은 goal.id 를 sid 로 persistent AgentInstance 를 유지하고, iter
+    // 시작 시 clearPending() 만 호출해 stale tool-approval 상태만 닦는다.
+    const sid = base;
     const agent = await summon(sid);
+    agent.clearPending?.();
 
     const personaRaw = opts.personaOverride ?? input.goal.frontmatter.persona;
     const personaReq: SoulRequest = personaRaw
