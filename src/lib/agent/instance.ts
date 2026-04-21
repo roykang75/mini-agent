@@ -269,7 +269,7 @@ export class AgentInstance {
     if (this.messages.length === 0) {
       const memoryDir = process.env.AGENT_MEMORY_DIR;
       if (memoryDir && shouldRecall(this.sid)) {
-        const { prompt, memoryHits, curriculumHits, selfMapHits } =
+        const { prompt, memoryHits, curriculumHits, selfMapHits, recentSessionsHits } =
           await composeCombinedRecall(
             memoryDir,
             CURRICULUM_DIR,
@@ -303,6 +303,14 @@ export class AgentInstance {
             type: "self_map_recalled",
             count: selfMapHits.length,
             problem_ids: selfMapHits.map((h) => h.cell.problem_id),
+            model: MODEL_ID,
+          };
+        }
+        if (recentSessionsHits.length > 0) {
+          yield {
+            type: "recent_sessions_recalled",
+            count: recentSessionsHits.length,
+            session_ids: recentSessionsHits.map((h) => h.session_id),
             model: MODEL_ID,
           };
         }

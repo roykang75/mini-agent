@@ -3,6 +3,7 @@ export type AgentEvent =
   | { type: "memory_recalled"; count: number; ids: string[] }
   | { type: "curriculum_recalled"; count: number; problem_ids: string[]; model: string }
   | { type: "self_map_recalled"; count: number; problem_ids: string[]; model: string }
+  | { type: "recent_sessions_recalled"; count: number; session_ids: string[]; model: string }
   | { type: "thinking"; content: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | {

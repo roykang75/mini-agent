@@ -239,7 +239,8 @@ export function createAgentRunner(
           }
           default:
             // persona_resolved / memory_recalled / curriculum_recalled /
-            // self_map_recalled / thinking / tool_result / tool_rejected / done
+            // self_map_recalled / recent_sessions_recalled / thinking /
+            // tool_result / tool_rejected / done
             break;
         }
       }
