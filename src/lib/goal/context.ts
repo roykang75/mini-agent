@@ -83,6 +83,15 @@ ${criteriaList}
 3. budget 소진 전에 완료 or hil_checkpoint 권장.
 4. 중간에 stuck 이면 \`ask_advisor\` skill 호출 (Opus teacher 가 답변).
 5. 다음 iteration 을 위한 **단일 문단 요약** 을 매 turn 의 마지막에 남길 것. 요약은 "이번 iteration 에서 무엇을 했고, 다음 iteration 이 어디서 이어가야 하는지".
+
+## 작업 노트 (working notes) — 자기 참조용 스크래치패드
+
+경로: \`agent-memory/working/${fm.id}.md\` — 이 goal 전용. allow_fs_write 와 무관하게 auto-approve.
+
+- **iter 시작 시**: 같은 파일이 있으면 \`read_file\` 로 먼저 읽고, 이전 iter 가 남긴 판단/시도/실패를 맥락으로 삼아라. 없으면 새로 만든다.
+- **iter 진행 중**: 중요한 중간 판단 (가설 / 제외한 경로 / 다음 iter 가 꼭 알아야 할 사실) 을 파일에 append 한다. 단일 문단 iteration 요약보다 풍부한 형태 OK.
+- **용도**: 이 파일은 너 자신을 위한 일기다. Roy 도 읽을 수 있지만, 첫 독자는 "다음 iter 의 나".
+- **갱신 실패시**: 그냥 생략하고 진행. 실패해도 goal 실행 전체가 멈추지 않도록 한다.
 </goal_context>`;
 }
 

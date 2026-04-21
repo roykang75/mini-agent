@@ -180,7 +180,11 @@ export function createAgentRunner(
               pendingSid = null;
               break;
             }
-            const decision = decideToolApproval(ev.toolCalls, autonomy, { cwd: approvalCwd });
+            const workingNotesPath = `agent-memory/working/${input.goal.frontmatter.id}.md`;
+            const decision = decideToolApproval(ev.toolCalls, autonomy, {
+              cwd: approvalCwd,
+              workingNotesPath,
+            });
 
             log.info(
               {

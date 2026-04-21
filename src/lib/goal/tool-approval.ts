@@ -31,6 +31,12 @@ export const HIL_CHECKPOINT_TOOL = "hil_checkpoint";
 export interface DecideOptions {
   /** Base working directory used to normalize `write_file` paths. Default: process.cwd(). */
   cwd?: string;
+  /**
+   * goal 전용 working notes 파일의 cwd-relative 경로. 매치 시 deny_fs_write 는
+   * 여전히 체크하되 allow_fs_write 없이도 auto-approve. Stage 5 (2026-04-21) —
+   * agent 가 iter 간 자기 노트를 축적할 수 있도록 하는 fixed scratchpad slot.
+   */
+  workingNotesPath?: string;
 }
 
 export interface ApprovalDecision {
@@ -51,11 +57,12 @@ export function decideToolApproval(
   opts: DecideOptions = {},
 ): ApprovalDecision {
   const cwd = opts.cwd ?? process.cwd();
+  const workingNotesPath = opts.workingNotesPath;
   const trace: ApprovalDecision["trace"] = [];
   let hilFirst: ApprovalDecision["hil_trigger"];
 
   for (const tc of toolCalls) {
-    const r = evaluateOne(tc, autonomy, cwd);
+    const r = evaluateOne(tc, autonomy, cwd, workingNotesPath);
     trace.push({ tool: tc.name, decision: r.allow ? "auto" : "hil", reason: r.reason });
     if (!r.allow && !hilFirst) {
       hilFirst = {
@@ -78,7 +85,12 @@ interface SingleEval {
   reason: string;
 }
 
-function evaluateOne(tc: PendingToolCall, autonomy: AutonomyConfig, cwd: string): SingleEval {
+function evaluateOne(
+  tc: PendingToolCall,
+  autonomy: AutonomyConfig,
+  cwd: string,
+  workingNotesPath?: string,
+): SingleEval {
   if (tc.name === HIL_CHECKPOINT_TOOL) {
     return { allow: false, reason: "hil_checkpoint — explicit agent request" };
   }
@@ -104,6 +116,11 @@ function evaluateOne(tc: PendingToolCall, autonomy: AutonomyConfig, cwd: string)
 
     const denied = autonomy.deny_fs_write.find((g) => globMatch(g, norm));
     if (denied) return { allow: false, reason: `path matches deny_fs_write "${denied}"` };
+
+    // Stage 5 — working notes 고정 slot. deny 는 체크했고, 여기서만 allow 우회.
+    if (workingNotesPath && norm === workingNotesPath) {
+      return { allow: true, reason: `working_notes slot "${workingNotesPath}"` };
+    }
 
     if (autonomy.allow_fs_write.length === 0) {
       return { allow: false, reason: "allow_fs_write empty — no writes permitted" };
