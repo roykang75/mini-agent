@@ -47,13 +47,23 @@ async function parseEpisodeMeta(path: string): Promise<EpisodeMeta | null> {
   const fmText = match[1];
   const idMatch = fmText.match(/^id:\s*(\S+)/m);
   const startedMatch = fmText.match(/^started:\s*(\S+)/m);
-  const sourcesMatch = fmText.match(/^sources:\s*\[?\s*(.+?)(?:\s*\])?\s*$/m);
-  if (!idMatch || !startedMatch) return null;
-  let rawPath: string | null = null;
-  if (sourcesMatch) {
-    const first = sourcesMatch[1].split(",")[0].trim().replace(/^["']|["']$/g, "");
-    rawPath = first.split("#")[0];
+  // sources 는 YAML 두 형태 모두 처리:
+  //   (a) flow:   sources: [raw/.../0001.jsonl#L1-N]
+  //   (b) block:  sources:\n  - raw/.../0001.jsonl#L1-N
+  const sourcesFlow = fmText.match(/^sources:\s*\[\s*(.+?)\s*\]/m);
+  const sourcesBlock = fmText.match(/^sources:\s*\n((?:\s*-\s*.+\n?)+)/m);
+  let first: string | null = null;
+  if (sourcesFlow) {
+    first = sourcesFlow[1].split(",")[0].trim();
+  } else if (sourcesBlock) {
+    const line = sourcesBlock[1].split("\n")[0] ?? "";
+    first = line.replace(/^\s*-\s*/, "").trim();
   }
+  let rawPath: string | null = null;
+  if (first) {
+    rawPath = first.replace(/^["']|["']$/g, "").split("#")[0];
+  }
+  if (!idMatch || !startedMatch) return null;
   return {
     path,
     id: idMatch[1],
