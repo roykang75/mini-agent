@@ -111,11 +111,12 @@ export async function appendRaw(
   state.stream.write(JSON.stringify(event) + "\n");
 }
 
-export async function closeRaw(sessionId: string): Promise<void> {
+export async function closeRaw(sessionId: string): Promise<string | undefined> {
   const state = sessions.get(sessionId);
-  if (!state) return;
+  if (!state) return undefined;
   sessions.delete(sessionId);
   await new Promise<void>((resolve) => state.stream.end(resolve));
+  return state.path;
 }
 
 export function rawPath(sessionId: string): string | undefined {

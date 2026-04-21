@@ -29,6 +29,7 @@ import {
   newMemorySessionId,
   setPersona as rawSetPersona,
 } from "../memory/raw";
+import { maybeSpawnConsolidate } from "../memory/auto-consolidate";
 import { composeCombinedRecall, shouldRecall } from "../memory/recall";
 import type { Message, ContentBlock, LLMResponse } from "../llm/types";
 import type { AgentEvent, PendingToolCall } from "../types";
@@ -152,11 +153,13 @@ async function* withRawCapture(
       }
       yield ev;
       if (ev.type === "done" || ev.type === "error") {
-        await closeRaw(memoryId);
+        const rawPath = await closeRaw(memoryId);
+        maybeSpawnConsolidate(rawPath, process.env.AGENT_MEMORY_DIR);
       }
     }
   } catch (e) {
-    await closeRaw(memoryId);
+    const rawPath = await closeRaw(memoryId);
+    maybeSpawnConsolidate(rawPath, process.env.AGENT_MEMORY_DIR);
     throw e;
   }
 }
