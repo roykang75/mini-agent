@@ -17,6 +17,7 @@ import type { EvaluatorContext } from "./completion/types";
 import { BudgetTracker, type BudgetBreachReason } from "./budget";
 import { buildGoalSystemTail, buildIterationUserMessage, type IterationContext } from "./context";
 import { loadRuntimeLimits } from "../config/limits";
+import { maybeSpawnPostGoalHook } from "./post-goal-hook";
 
 export interface IterationInput {
   goal: LoadedGoal;
@@ -84,6 +85,7 @@ export async function runGoal(
     const tickStatus = tracker.tickIteration();
     if (!tickStatus.within_limits) {
       await pauseGoal(goal, `budget breached: ${tickStatus.breached}`, now());
+      maybeSpawnPostGoalHook(goalPath);
       return {
         final_status: "paused",
         reason: `budget_${tickStatus.breached}`,
@@ -96,6 +98,7 @@ export async function runGoal(
     const wtStatus = tracker.checkWallTime(now());
     if (!wtStatus.within_limits) {
       await pauseGoal(goal, `wall_time exceeded`, now());
+      maybeSpawnPostGoalHook(goalPath);
       return {
         final_status: "paused",
         reason: "budget_wall_time_minutes",
@@ -116,6 +119,7 @@ export async function runGoal(
     } catch (e) {
       await appendProgress(goal, `[iter ${iteration}] agent error: ${(e as Error).message}`, now());
       await pauseGoal(goal, `agent_error: ${(e as Error).message}`, now());
+      maybeSpawnPostGoalHook(goalPath);
       return {
         final_status: "paused",
         reason: `agent_error: ${(e as Error).message}`,
@@ -139,6 +143,7 @@ export async function runGoal(
         now(),
       );
       await pauseGoal(goal, `hil_checkpoint: ${out.hil_checkpoint_triggered.reason}`, now());
+      maybeSpawnPostGoalHook(goalPath);
       return {
         final_status: "paused",
         reason: `hil: ${out.hil_checkpoint_triggered.reason}`,
@@ -154,6 +159,7 @@ export async function runGoal(
       goal = await loadGoal(goalPath);
       await persistProgress(goal, tracker);
       await setStatus(await loadGoal(goalPath), "completed", "completion_criteria all pass", now());
+      maybeSpawnPostGoalHook(goalPath);
       return {
         final_status: "completed",
         iterations_executed: iteration,
