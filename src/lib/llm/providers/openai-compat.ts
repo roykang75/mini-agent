@@ -45,25 +45,40 @@ interface OAITool {
 
 interface OAIChoice {
   index: number;
-  message: { role: "assistant"; content: string | null; tool_calls?: OAIToolCall[] };
+  message: {
+    role: "assistant";
+    content: string | null;
+    reasoning_content?: string | null;
+    tool_calls?: OAIToolCall[];
+  };
   finish_reason: "stop" | "tool_calls" | "length" | "content_filter" | string;
+}
+
+interface OAIUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  completion_tokens_details?: { reasoning_tokens?: number };
 }
 
 interface OAIResponse {
   id: string;
   choices: OAIChoice[];
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  usage?: OAIUsage;
 }
 
 interface OAIStreamChoice {
   index: number;
-  delta: { content?: string; tool_calls?: OAIToolCall[] };
+  delta: { content?: string; reasoning_content?: string; tool_calls?: OAIToolCall[] };
   finish_reason: string | null;
 }
 
 interface OAIStreamChunk {
   choices: OAIStreamChoice[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
 }
 
 export class OpenAICompatClient {
@@ -138,10 +153,13 @@ export class OpenAICompatClient {
 
       const content = translateResponseContent(choice.message.content, choice.message.tool_calls);
       const stop_reason = translateFinishReason(choice.finish_reason);
+      const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens;
       const usage: LLMUsage = {
         input_tokens: data.usage?.prompt_tokens ?? 0,
         output_tokens: data.usage?.completion_tokens ?? 0,
+        ...(reasoningTokens != null ? { reasoning_tokens: reasoningTokens } : {}),
       };
+      const reasoning = choice.message.reasoning_content || undefined;
 
       log.info(
         {
@@ -150,13 +168,14 @@ export class OpenAICompatClient {
           duration_ms: Date.now() - started,
           tokens_in: usage.input_tokens,
           tokens_out: usage.output_tokens,
+          reasoning_tokens: reasoningTokens,
           cache_creation_tokens: 0,
           cache_read_tokens: 0,
           stop_reason,
         },
         "openai-compat chat ok",
       );
-      return { content, stop_reason, usage };
+      return { content, stop_reason, usage, ...(reasoning ? { reasoning } : {}) };
     });
   }
 
@@ -196,9 +215,11 @@ export class OpenAICompatClient {
 
     // Accumulators.
     let textBuf = "";
+    let reasoningBuf = "";
     const toolBuf = new Map<number, { id?: string; name?: string; args: string }>();
     let stopReason: StopReason = "end_turn";
     const usage: LLMUsage = { input_tokens: 0, output_tokens: 0 };
+    let streamReasoningTokens: number | undefined;
 
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
@@ -229,10 +250,18 @@ export class OpenAICompatClient {
           if (chunk.usage) {
             if (chunk.usage.prompt_tokens != null) usage.input_tokens = chunk.usage.prompt_tokens;
             if (chunk.usage.completion_tokens != null) usage.output_tokens = chunk.usage.completion_tokens;
+            const rt = chunk.usage.completion_tokens_details?.reasoning_tokens;
+            if (rt != null) streamReasoningTokens = rt;
           }
 
           const choice = chunk.choices?.[0];
           if (!choice) continue;
+
+          const deltaReasoning = choice.delta.reasoning_content;
+          if (deltaReasoning != null && deltaReasoning.length > 0) {
+            reasoningBuf += deltaReasoning;
+            yield { type: "reasoning_delta", text: deltaReasoning };
+          }
 
           const deltaText = choice.delta.content;
           if (deltaText != null && deltaText.length > 0) {
@@ -279,7 +308,13 @@ export class OpenAICompatClient {
       content.push({ type: "tool_use", id, name, input });
     }
 
-    const response: LLMResponse = { content, stop_reason: stopReason, usage };
+    if (streamReasoningTokens != null) usage.reasoning_tokens = streamReasoningTokens;
+    const response: LLMResponse = {
+      content,
+      stop_reason: stopReason,
+      usage,
+      ...(reasoningBuf.length > 0 ? { reasoning: reasoningBuf } : {}),
+    };
 
     log.info(
       {
@@ -288,6 +323,7 @@ export class OpenAICompatClient {
         duration_ms: Date.now() - started,
         tokens_in: usage.input_tokens,
         tokens_out: usage.output_tokens,
+        reasoning_tokens: streamReasoningTokens,
         cache_creation_tokens: 0,
         cache_read_tokens: 0,
         stop_reason: stopReason,

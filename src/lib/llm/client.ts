@@ -4,6 +4,7 @@ import { OpenAICompatClient } from "./providers/openai-compat";
 
 export type StreamEvent =
   | { type: "text_delta"; text: string }
+  | { type: "reasoning_delta"; text: string }
   | { type: "done"; response: LLMResponse };
 
 export interface LLMClient {
