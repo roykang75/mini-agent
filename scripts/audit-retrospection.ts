@@ -22,11 +22,31 @@ export interface CellStat {
   outcomes_opus: Record<string, number>;
 }
 
+/**
+ * Single self-miscalibration event — agent 의 자기-확신과 Opus 관찰 사이의
+ * 큰 간극 + wrong outcome 의 조합. ADR-007 "self-miscalibration 측정 채널"
+ * (NEXT.md 15차 Top 1). 채널은 sampling; cell_stats 와 달리 rate 가 아니라
+ * 개별 event 의 시계열 리스트.
+ */
+export interface MiscalibrationEvent {
+  session_id: string;
+  started: string;
+  cell_id: string;
+  canonical_cell_id: string;
+  confidence_gap: number;
+  outcome_opus_rubric: string;
+  sonnet_called: boolean;
+  opus_judged_advisor_needed: boolean;
+}
+
 export interface AuditReport {
   window_size: number;
   sessions_audited: number;
   cell_stats: CellStat[];
+  miscalibration_events: MiscalibrationEvent[];
+  miscalibration_min_gap: number;
   markdown: string;
+  miscalibration_markdown: string;
 }
 
 export interface AuditOpts {
@@ -41,6 +61,11 @@ export interface AuditOpts {
    * `scripts/cell-canonicalize.ts`.
    */
   canonicalMapping?: Record<string, string>;
+  /**
+   * Self-miscalibration 채널의 conf_gap 하한 (default 0.5). 이 임계 이상 +
+   * outcome_opus_rubric === "wrong" 인 observation 을 event 로 수집한다.
+   */
+  miscalibrationMinGap?: number;
 }
 
 interface EpisodeL3 {
@@ -126,6 +151,8 @@ export async function auditRetrospection(opts: AuditOpts): Promise<AuditReport> 
   }>();
 
   const canon = (cid: string): string => opts.canonicalMapping?.[cid] ?? cid;
+  const miscalMinGap = opts.miscalibrationMinGap ?? 0.5;
+  const miscalibration_events: MiscalibrationEvent[] = [];
 
   for (const s of recent) {
     // Group observation cells by canonical id — multiple raw cells mapping to
@@ -134,6 +161,18 @@ export async function auditRetrospection(opts: AuditOpts): Promise<AuditReport> 
     // activity with two slightly different cell_ids).
     const canonicalCells = new Map<string, ObsCell>();
     for (const ob of s.obs) {
+      if (ob.confidence_gap >= miscalMinGap && ob.outcome_opus_rubric === "wrong") {
+        miscalibration_events.push({
+          session_id: s.session_id,
+          started: s.started,
+          cell_id: ob.cell_id,
+          canonical_cell_id: canon(ob.cell_id),
+          confidence_gap: ob.confidence_gap,
+          outcome_opus_rubric: ob.outcome_opus_rubric,
+          sonnet_called: ob.sonnet_called,
+          opus_judged_advisor_needed: ob.opus_judged_advisor_needed,
+        });
+      }
       const key = canon(ob.cell_id);
       if (!canonicalCells.has(key)) canonicalCells.set(key, ob);
     }
@@ -163,12 +202,16 @@ export async function auditRetrospection(opts: AuditOpts): Promise<AuditReport> 
     outcomes_opus: v.outcomes,
   }));
   cell_stats.sort((a, b) => b.mismatch_rate - a.mismatch_rate);
+  miscalibration_events.sort((a, b) => b.confidence_gap - a.confidence_gap);
 
   return {
     window_size: window,
     sessions_audited: recent.length,
     cell_stats,
+    miscalibration_events,
+    miscalibration_min_gap: miscalMinGap,
     markdown: renderMarkdown(window, recent.length, cell_stats),
+    miscalibration_markdown: renderMiscalibrationMarkdown(window, recent.length, miscalMinGap, miscalibration_events),
   };
 }
 
@@ -191,6 +234,38 @@ function renderMarkdown(window: number, n: number, stats: CellStat[]): string {
   return lines.join("\n");
 }
 
+function renderMiscalibrationMarkdown(
+  window: number,
+  n: number,
+  minGap: number,
+  events: MiscalibrationEvent[],
+): string {
+  const lines: string[] = [];
+  lines.push(`# self-miscalibration events`);
+  lines.push("");
+  lines.push(`- window_size: ${window}`);
+  lines.push(`- sessions_audited: ${n}`);
+  lines.push(`- min_confidence_gap: ${minGap}`);
+  lines.push(`- outcome_filter: wrong`);
+  lines.push(`- n_events: ${events.length}`);
+  lines.push(`- generated_at: ${new Date().toISOString()}`);
+  lines.push("");
+  lines.push(`## Events (sorted by confidence_gap desc)`);
+  lines.push("");
+  if (events.length === 0) {
+    lines.push("_none_");
+    return lines.join("\n");
+  }
+  lines.push("| started | session_id | canonical_cell | cell_id | gap | outcome | called | needed |");
+  lines.push("|---|---|---|---|---|---|---|---|");
+  for (const e of events) {
+    lines.push(
+      `| ${e.started} | ${e.session_id} | ${e.canonical_cell_id} | ${e.cell_id} | ${e.confidence_gap.toFixed(2)} | ${e.outcome_opus_rubric} | ${e.sonnet_called} | ${e.opus_judged_advisor_needed} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const memoryDir = process.env.AGENT_MEMORY_DIR;
   const curriculumDir = process.env.AGENT_CURRICULUM_DIR;
@@ -199,6 +274,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
   const canonPath = process.env.CANON_MAPPING_PATH;
+  const miscalOnly = process.env.MISCAL_ONLY === "1" || process.argv.includes("--miscalibration-only");
+  const miscalMinGap = process.env.MISCAL_MIN_GAP ? Number(process.env.MISCAL_MIN_GAP) : undefined;
   (async () => {
     let canonicalMapping: Record<string, string> | undefined;
     if (canonPath) {
@@ -210,8 +287,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       curriculumDir,
       window: Number(process.env.AUDIT_WINDOW ?? 10),
       canonicalMapping,
+      miscalibrationMinGap: miscalMinGap,
     });
-    console.log(r.markdown);
+    console.log(miscalOnly ? r.miscalibration_markdown : r.markdown);
     process.exit(0);
   })().catch((e) => {
     console.error(e);
