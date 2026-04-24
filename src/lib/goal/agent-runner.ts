@@ -237,6 +237,26 @@ export function createAgentRunner(
             lastModel = ev.model;
             break;
           }
+          case "user_input_request": {
+            // 자율 goal-runner 는 interactive 응답 경로가 없으므로 agent 가 던진
+            // user_input_request 를 HIL 로 승격해 goal 을 paused 로 전환. Roy 는
+            // 파일의 goal.md 를 더 명확히 바꾼 뒤 재실행하는 방식으로 해소.
+            //
+            // 재실행 시 agent.receive() 가 pendingUserInput 을 auto-cancel 하므로
+            // agent 상태 leak 없음 — 이 rescue 경로는 instance.ts 의 guard 에 이미 구현.
+            if (!hil) {
+              const optSummary =
+                ev.kind === "choose" && ev.options && ev.options.length > 0
+                  ? ` options=[${ev.options.map((o) => o.id).join(", ")}]`
+                  : "";
+              hil = {
+                reason: `agent_asked_user (${ev.kind})`,
+                proposed_action: `${ev.question}${optSummary}`,
+              };
+            }
+            pendingSid = null;
+            break;
+          }
           case "error": {
             errorMsg = ev.message;
             // 에러 이후 이벤트는 전부 무시하고 runner 를 즉시 종료한다.

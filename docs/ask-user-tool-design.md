@@ -277,6 +277,14 @@ Agent Loop → tool_use 감지
 ## 9. 후속 / 열린 질문
 
 - **`order` / `form` kind 추가 시점**: 실제 요구가 생기면 tool 스키마에 필드 추가 +
-  UI 블록 케이스 추가만으로 확장 가능 (이벤트/엔드포인트는 공용).
-- **audit log**: `user_input_request` / `answer` 쌍을 memory raw 에 기록해 trajectory
-  분석에 활용할지 — ADR-003 / trajectory 설계와 함께 다시 볼 것.
+  UI 블록 케이스 추가만으로 확장 가능 (이벤트/엔드포인트는 공용). 보류.
+- **~~audit log~~**: ✅ **이미 작동 중** — `withRawCapture` 가 모든 `AgentEvent`
+  (text_delta 제외) 를 memory raw 에 append 하므로 `user_input_request` 이벤트와
+  사용자 응답 (`tool_result` name=ask_user) 이 동일 memoryId 의 jsonl 에 쌍으로
+  기록된다. 별도 구현 불필요. trajectory 분석 시 `event_type==user_input_request`
+  → 직후 `event_type==tool_result && payload.name=="ask_user"` 로 매칭.
+- **~~goal-runner 연계~~**: ✅ **처리됨** — `agent-runner.ts` 의 event loop 가
+  `user_input_request` 를 HIL 로 승격 (`hil = { reason: "agent_asked_user (<kind>)",
+  proposed_action: "<question> options=[...]" }`). Goal 은 paused 로 전이, Roy 가
+  goal.md 를 clarify 해 재실행하면 다음 iteration 의 `agent.receive()` 가
+  pendingUserInput 을 auto-cancel 하므로 상태 leak 없음.
