@@ -1,4 +1,4 @@
-import type { AgentEvent } from "./types";
+import type { AgentEvent, UserInputAnswer } from "./types";
 
 async function* parseSSEStream(
   res: Response,
@@ -36,12 +36,13 @@ async function* parseSSEStream(
 export async function* streamChat(
   message: string,
   persona?: string,
+  profileName?: string,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentEvent> {
   const res = await fetch("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, persona }),
+    body: JSON.stringify({ message, persona, profileName }),
     signal,
   });
 
@@ -63,6 +64,26 @@ export async function* streamApproval(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sessionId, approved, credentials }),
+    signal,
+  });
+
+  if (!res.ok) {
+    yield { type: "error", message: `HTTP ${res.status}: ${res.statusText}` };
+    return;
+  }
+
+  yield* parseSSEStream(res);
+}
+
+export async function* streamAnswer(
+  sessionId: string,
+  answer: UserInputAnswer,
+  signal?: AbortSignal,
+): AsyncGenerator<AgentEvent> {
+  const res = await fetch("/chat/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, answer }),
     signal,
   });
 

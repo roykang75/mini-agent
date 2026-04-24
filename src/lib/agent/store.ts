@@ -13,7 +13,7 @@
  */
 
 import type { Message, ContentBlock } from "../llm/types";
-import type { PendingToolCall } from "../types";
+import type { PendingToolCall, AskUserOption } from "../types";
 import type { PersonaName } from "../souls/registry.generated";
 import { createLogger } from "../log";
 
@@ -26,6 +26,21 @@ export interface SerializedPendingApproval {
   memoryId: string;
 }
 
+/**
+ * ask_user tool 의 pending 상태. `SerializedPendingApproval` 과는 완전히 별도
+ * 필드 — 보안 게이트(approval) 와 UX 게이트(user_input) 의 분리 유지.
+ */
+export interface SerializedPendingUserInput {
+  sessionId: string;
+  toolUseId: string;
+  memoryId: string;
+  lastAssistantContent: ContentBlock[];
+  kind: "choose" | "confirm";
+  /** 서버 검증용 — choose 일 때 사용자가 답한 id 가 이 목록 안에 있어야 함. */
+  optionIds?: string[];
+  multi?: boolean;
+}
+
 export interface SerializedAgentState {
   version: 1;
   sid: string;
@@ -35,9 +50,17 @@ export interface SerializedAgentState {
   resolvedRef: string | null;
   advisorCalls: number;
   pending: SerializedPendingApproval | null;
+  pendingUserInput: SerializedPendingUserInput | null;
+  /** 세션에 고정된 LLM profile 이름. 첫 receive() 때 결정되고 대화 내내 유지. */
+  profileName: string | null;
   createdAt: number;
   lastActiveAt: number;
 }
+
+// `AskUserOption` 은 타입 가져오기만 했지 값으로 쓰진 않음 — store 는 option 자체를 저장하지
+// 않고 optionIds 만 직렬화해서 가볍게 유지. (UI 에 다시 보여줄 options 는 messages 내
+// assistant content 의 tool_use block.input 에 이미 들어 있음.)
+export type { AskUserOption };
 
 export interface WorkingMemoryStore {
   put(sid: string, state: SerializedAgentState, ttlSec: number): Promise<void>;

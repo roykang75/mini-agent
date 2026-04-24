@@ -38,7 +38,7 @@ function sseHeaders(setCookie?: string): HeadersInit {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { message, persona, persona_ref: personaRef } = body;
+  const { message, persona, persona_ref: personaRef, profileName } = body;
 
   if (!message || typeof message !== "string") {
     return new Response(JSON.stringify({ error: "message is required" }), {
@@ -56,6 +56,13 @@ export async function POST(request: Request) {
 
   if (personaRef !== undefined && typeof personaRef !== "string") {
     return new Response(JSON.stringify({ error: "persona_ref must be a string" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (profileName !== undefined && typeof profileName !== "string") {
+    return new Response(JSON.stringify({ error: "profileName must be a string" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
@@ -82,7 +89,9 @@ export async function POST(request: Request) {
 
   const { sid, isNew } = getOrCreateSid(request);
   const agent = await summonAgent(sid);
-  const stream = createSSEStream(agent.receive(message, { persona, personaRef }));
+  const stream = createSSEStream(
+    agent.receive(message, { persona, personaRef }, profileName),
+  );
   return new Response(stream, {
     headers: sseHeaders(isNew ? sidCookieHeader(sid) : undefined),
   });

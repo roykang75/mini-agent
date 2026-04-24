@@ -2,14 +2,16 @@
 
 import { useEffect, useRef } from "react";
 import { Bot, User, FileText, FolderOpen, TerminalSquare, KeyRound, GitCompare } from "lucide-react";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, UserInputAnswer } from "@/lib/types";
 import type { PersonaName } from "@/lib/souls/registry.generated";
 import { ThinkingBlock } from "./thinking-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { ToolResultBlock } from "./tool-result-block";
 import { TypingIndicator } from "./typing-indicator";
 import { ToolApprovalBlock } from "./tool-approval-block";
+import { UserInputBlock } from "./user-input-block";
 import { PersonaSelector } from "./persona-selector";
+import { ModelSelector } from "./model-selector";
 
 interface ExamplePrompt {
   icon: typeof FolderOpen;
@@ -55,9 +57,13 @@ interface MessageListProps {
   messages: ChatMessage[];
   onSend?: (message: string) => void;
   onApproval?: (sessionId: string, approved: boolean, credentials?: Record<string, string>) => void;
+  onAnswer?: (sessionId: string, answer: UserInputAnswer) => void;
   isLoading?: boolean;
   persona: PersonaName;
   onPersonaChange: (persona: PersonaName) => void;
+  profileName: string | null;
+  onProfileChange: (name: string) => void;
+  profileLocked: boolean;
 }
 
 function isNearBottom(el: HTMLElement, threshold = 80): boolean {
@@ -68,9 +74,13 @@ export function MessageList({
   messages,
   onSend,
   onApproval,
+  onAnswer,
   isLoading,
   persona,
   onPersonaChange,
+  profileName,
+  onProfileChange,
+  profileLocked,
 }: MessageListProps) {
   const examples = EXAMPLE_PROMPTS_BY_PERSONA[persona] ?? EXAMPLE_PROMPTS_BY_PERSONA.default;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -105,8 +115,13 @@ export function MessageList({
             <p className="text-sm text-muted-foreground leading-relaxed">
               파일을 읽고, 쓰고, 명령어를 실행할 수 있는 AI Agent입니다.
             </p>
-            <div>
+            <div className="space-y-2">
               <PersonaSelector value={persona} onChange={onPersonaChange} />
+              <ModelSelector
+                value={profileName}
+                onChange={onProfileChange}
+                disabled={profileLocked}
+              />
             </div>
           </div>
 
@@ -145,7 +160,13 @@ export function MessageList({
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-4 py-4 flex justify-end">
+      <div className="mx-auto max-w-3xl px-4 py-4 flex justify-end items-center gap-2">
+        <ModelSelector
+          value={profileName}
+          onChange={onProfileChange}
+          compact
+          disabled={profileLocked || isLoading}
+        />
         <PersonaSelector value={persona} onChange={onPersonaChange} compact disabled={isLoading} />
       </div>
       <div className="mx-auto max-w-3xl px-4 pb-6 space-y-6">
@@ -154,7 +175,12 @@ export function MessageList({
             {group.role === "user" ? (
               <UserMessage content={group.messages[0].content} />
             ) : (
-              <AssistantGroup messages={group.messages} onApproval={onApproval} isLoading={isLoading} />
+              <AssistantGroup
+                messages={group.messages}
+                onApproval={onApproval}
+                onAnswer={onAnswer}
+                isLoading={isLoading}
+              />
             )}
           </div>
         ))}
@@ -184,10 +210,12 @@ function UserMessage({ content }: { content: string }) {
 function AssistantGroup({
   messages,
   onApproval,
+  onAnswer,
   isLoading,
 }: {
   messages: ChatMessage[];
   onApproval?: (sessionId: string, approved: boolean, credentials?: Record<string, string>) => void;
+  onAnswer?: (sessionId: string, answer: UserInputAnswer) => void;
   isLoading?: boolean;
 }) {
   return (
@@ -212,6 +240,16 @@ function AssistantGroup({
                 toolCalls={msg.pendingToolCalls}
                 onApprove={(credentials) => onApproval?.(msg.sessionId!, true, credentials)}
                 onReject={() => onApproval?.(msg.sessionId!, false)}
+                disabled={msg.content !== "" || isLoading}
+              />
+            )}
+            {msg.role === "user_input" && msg.userInput && (
+              <UserInputBlock
+                kind={msg.userInput.kind}
+                question={msg.userInput.question}
+                options={msg.userInput.options}
+                multi={msg.userInput.multi}
+                onAnswer={(answer) => onAnswer?.(msg.sessionId!, answer)}
                 disabled={msg.content !== "" || isLoading}
               />
             )}

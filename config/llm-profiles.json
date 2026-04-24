@@ -1,0 +1,18 @@
+{
+  "default": "claude-sonnet-4-6",
+  "profiles": [
+    {
+      "name": "claude-sonnet-4-6",
+      "label": "Claude Sonnet 4.6",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6"
+    },
+    {
+      "name": "qwen3.6-27b-mlx",
+      "label": "Qwen 3.6 27B (local)",
+      "provider": "openai-compat",
+      "model": "qwen3.6-27b-mlx",
+      "baseURL": "http://192.168.1.13:1234"
+    }
+  ]
+}

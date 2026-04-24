@@ -58,6 +58,8 @@ async function main() {
     resolvedRef: "HEAD",
     advisorCalls: 1,
     pending: null,
+    pendingUserInput: null,
+    profileName: null,
     createdAt: Date.now(),
     lastActiveAt: Date.now(),
   };
@@ -101,6 +103,8 @@ async function main() {
       resolvedRef: "HEAD",
       advisorCalls: 0,
       pending: null,
+      pendingUserInput: null,
+      profileName: null,
       createdAt: Date.now() - 1000,
       lastActiveAt: Date.now() - 500,
     },
