@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   });
 
   // --- 1. flush 실패 → 파일 적재 ---
-  client.push({ op: "trace_start", trace: { trace_id: "t1", agent_name: "a", started_at: 1, status: "running" } });
+  client.push({ op: "trace_start", trace: { trace_id: "t1", agent_name: "a", started_at: 1 } });
   await client.flush();
   await new Promise((r) => setTimeout(r, 50));
   let files = readdirSync(outboxDir).filter((f) => f.endsWith(".jsonl"));
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
 
   // --- 4. 다시 fail 모드 → MAX_RETRY 까지 reap 반복 → dead/ 로 이동 ---
   mode = "fail";
-  client.push({ op: "trace_start", trace: { trace_id: "t2", agent_name: "a", started_at: 2, status: "running" } });
+  client.push({ op: "trace_start", trace: { trace_id: "t2", agent_name: "a", started_at: 2 } });
   await client.flush();
   await new Promise((res) => setTimeout(res, 50));
   for (let i = 0; i < 6; i++) await client.reapOutbox();

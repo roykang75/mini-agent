@@ -31,7 +31,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve as pathResolve } from "node:path";
+import { basename as pathBasename, join, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../log";
 import type { AgentIdentity, IngestBatch, IngestItem } from "./wire";
@@ -255,7 +255,7 @@ export class NightWatchClient {
         const deadDir = join(this.outboxDir, "dead");
         try {
           mkdirSync(deadDir, { recursive: true });
-          renameSync(f.path, join(deadDir, basename(f.path)));
+          renameSync(f.path, join(deadDir, pathBasename(f.path)));
         } catch {
           try {
             unlinkSync(f.path);
@@ -320,10 +320,6 @@ export class NightWatchClient {
   }
 }
 
-function basename(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i >= 0 ? path.slice(i + 1) : path;
-}
 
 let _client: NightWatchClient | null = null;
 
@@ -356,5 +352,8 @@ export function getNightWatchClient(): NightWatchClient {
 
 /** Test-only — replace the singleton (or null to force re-init from env on next get). */
 export function setNightWatchClient(client: NightWatchClient | null): void {
+  // 기존 클라이언트의 reaper interval 누수 방지 — Next.js HMR / vitest reset 시
+  // 이전 setInterval 이 매달려 있던 문제 차단.
+  _client?.stopReaper();
   _client = client;
 }
