@@ -21,6 +21,7 @@ import type { Message } from "../llm/types";
 import { detectSignals, type Signal } from "./signals";
 import type { RawEvent } from "./raw";
 import { createLogger } from "../log";
+import { filterCascadeRisk } from "./cascade-filter";
 
 const log = createLogger("memory");
 
@@ -81,6 +82,7 @@ interface EpisodeFrontmatter {
 
 export interface ConsolidateResult {
   episodes: ConsolidatedEpisode[];
+  skipped?: Array<{ episode: ConsolidatedEpisode; reason: string; detail: string }>;
   usedFallback: boolean;
   fallbackReason?: string;
 }
@@ -138,8 +140,37 @@ export async function consolidate(opts: ConsolidateOptions): Promise<Consolidate
 
       const now = new Date().toISOString();
       const enriched = parsed.map((p) => finalizeEpisode(p, meta, model, now));
-      const written = await Promise.all(enriched.map((e) => writeEpisode(e, opts.memoryDir)));
-      return { episodes: written, usedFallback: false };
+
+      // M1 — cascade-confab episode 차단 (자연 누적 corruption 방지).
+      // env M1_CASCADE_FILTER=off 면 비활성. default on.
+      const m1Flag = (process.env.M1_CASCADE_FILTER ?? "on").toLowerCase();
+      const m1Active = m1Flag !== "off" && m1Flag !== "0" && m1Flag !== "false";
+      const { written: kept, skipped } = m1Active
+        ? filterCascadeRisk(enriched)
+        : { written: enriched, skipped: [] };
+      for (const s of skipped) {
+        log.warn(
+          {
+            event: "cascade_episode_skipped",
+            reason: s.reason,
+            detail: s.detail,
+            title: s.episode.frontmatter.title,
+            session_id: s.episode.frontmatter.session_id,
+          },
+          "M1: cascade-confab episode 차단",
+        );
+      }
+
+      const written = await Promise.all(kept.map((e) => writeEpisode(e, opts.memoryDir)));
+      return {
+        episodes: written,
+        skipped: skipped.map((s) => ({
+          episode: s.episode,
+          reason: s.reason,
+          detail: s.detail,
+        })),
+        usedFallback: false,
+      };
     } catch (e) {
       lastErr = (e as Error).message;
       log.warn({ event: "consolidate_attempt_failed", attempt, err_message: lastErr }, "attempt failed");
