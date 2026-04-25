@@ -19,7 +19,24 @@ export interface MapContext {
   trace_id: string;
   /** Caller-provided seq generator. Must be unique within trace. */
   nextSeq: () => number;
+  /**
+   * event_id of the most recent llm_response in this trace. When set, tool /
+   * chat_usage / message / user_input_* 이벤트는 이 id 를 parent_event_id 로
+   * 잡아 LangSmith 스타일 waterfall tree 에서 LLM 응답의 child 로 보이게 한다.
+   */
+  currentLlmResponseEventId?: string | null;
 }
+
+/** 이 kind 는 가장 최근 llm_response 의 child 로 parent 를 설정한다. */
+const CHILDREN_OF_LLM_RESPONSE = new Set([
+  "tool_call",
+  "tool_result",
+  "tool_rejected",
+  "tool_approval_request",
+  "user_input_request",
+  "chat_usage",
+  "message",
+]);
 
 const TOOL_OUTPUT_PREVIEW_MAX = 4096;
 const PAYLOAD_SUMMARY_MAX = 200;
@@ -38,7 +55,17 @@ export function mapAgentEvent(ev: AgentEvent, ctx: MapContext): EventRecord | nu
   const ts = Date.now();
   const event_id = randomUUID();
   const seq = ctx.nextSeq();
-  const base = { event_id, trace_id: ctx.trace_id, seq, ts } as const;
+  const parent_event_id =
+    ctx.currentLlmResponseEventId && CHILDREN_OF_LLM_RESPONSE.has(ev.type)
+      ? ctx.currentLlmResponseEventId
+      : undefined;
+  const base = {
+    event_id,
+    trace_id: ctx.trace_id,
+    seq,
+    ts,
+    ...(parent_event_id ? { parent_event_id } : {}),
+  } as const;
 
   switch (ev.type) {
     case "persona_resolved":

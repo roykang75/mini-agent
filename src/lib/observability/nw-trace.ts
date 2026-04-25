@@ -48,6 +48,14 @@ export interface TraceContext {
   model_breakdown: Map<string, ModelBreakdownEntry>;
   /** Last terminal status observed in the stream — defaults to "ok". */
   endStatus: TraceStatus;
+  /**
+   * event_id of the most recent llm_response in this trace. tool_call /
+   * tool_result / chat_usage / message / user_input_* 이벤트는 이 id 를
+   * parent_event_id 로 잡는다 — LangSmith 스타일 waterfall tree 에서 LLM 응답
+   * 이 tool 호출의 부모로 보여야 계층이 직관적.
+   * 첫 LLM 호출 이전에는 null.
+   */
+  currentLlmResponseEventId: string | null;
 }
 
 export function newTraceContext(opts: {
@@ -70,6 +78,7 @@ export function newTraceContext(opts: {
     assistant_pieces: [],
     model_breakdown: new Map(),
     endStatus: "ok",
+    currentLlmResponseEventId: null,
   };
 }
 
@@ -172,6 +181,7 @@ export async function* withNightWatchTrace(
       const rec = mapAgentEvent(ev, {
         trace_id: ctx.trace_id,
         nextSeq: () => ctx.seq++,
+        currentLlmResponseEventId: ctx.currentLlmResponseEventId,
       });
       if (rec) pushEvent(rec);
       yield ev;
@@ -235,8 +245,9 @@ export function recordLlmResponse(
   response: LLMResponse,
 ): void {
   const ts = Date.now();
+  const responseEventId = randomUUID();
   pushEvent({
-    event_id: randomUUID(),
+    event_id: responseEventId,
     trace_id: ctx.trace_id,
     seq: ctx.seq++,
     parent_event_id: parent.event_id,
@@ -256,6 +267,9 @@ export function recordLlmResponse(
     },
     payload_summary: `stop=${response.stop_reason} in=${response.usage.input_tokens} out=${response.usage.output_tokens}`,
   });
+  // 이후 yield 되는 tool_call / tool_result / chat_usage / message /
+  // user_input_* 이벤트가 이 response 의 child 로 보이도록 컨텍스트에 고정.
+  ctx.currentLlmResponseEventId = responseEventId;
 
   if (response.reasoning && response.reasoning.length > 0) {
     pushEvent({
