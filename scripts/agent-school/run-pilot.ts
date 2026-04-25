@@ -254,7 +254,8 @@ async function runProblem(p: Problem, runIndex: number): Promise<RunOutcome> {
   }
 
   try {
-    await consumeGenerator(agent.receive(p.prompt, { persona: "default" }));
+    const profileName = process.env.LLM_PROFILE || undefined;
+    await consumeGenerator(agent.receive(p.prompt, { persona: "default" }, profileName));
   } catch (e) {
     console.error(`    [error] receive threw: ${(e as Error).message}`);
   }
