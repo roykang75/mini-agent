@@ -14,6 +14,12 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import matter from "gray-matter";
 
+try {
+  (process as unknown as { loadEnvFile?: (p?: string) => void }).loadEnvFile?.(".env.local");
+} catch {
+  // file missing — askAdvisor will throw a clear error if API key is unset
+}
+
 import { askAdvisor } from "../src/lib/llm/advisor";
 
 export interface GradeRealSessionOpts {
@@ -47,7 +53,7 @@ export interface ObservationFrontmatter {
   gap_vs_self_summary: string;
 }
 
-const PROMPT_VERSION = "grade-real-session-v1";
+const PROMPT_VERSION = process.env.GRADE_PROMPT_VERSION ?? "grade-real-session-v1";
 const OPUS_MODEL = process.env.GRADE_OPUS_MODEL ?? "claude-opus-4-7";
 
 export async function gradeRealSession(opts: GradeRealSessionOpts): Promise<ObservationFrontmatter> {
