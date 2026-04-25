@@ -1,11 +1,17 @@
 {
-  "default": "claude-sonnet-4-6",
+  "default": "claude-haiku-4-5",
   "profiles": [
     {
       "name": "claude-sonnet-4-6",
       "label": "Claude Sonnet 4.6",
       "provider": "anthropic",
       "model": "claude-sonnet-4-6"
+    },
+    {
+      "name": "claude-haiku-4-5",
+      "label": "Claude Haiku 4.5 (cheap test)",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001"
     },
     {
       "name": "qwen3.6-27b-mlx",

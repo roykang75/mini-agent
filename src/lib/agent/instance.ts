@@ -412,6 +412,10 @@ export class AgentInstance {
             agent_name: NW_AGENT_NAME,
             started_at: traceCtx.startedAt,
             user_message: userMessage.slice(0, 1000),
+            metadata: this.buildTraceMetadata({
+              memory_id: memoryId,
+              kind: "receive",
+            }),
           },
           this.runReceive(userMessage, personaReq, memoryId),
         ),
@@ -531,11 +535,14 @@ export class AgentInstance {
             session_id: this.sid,
             agent_name: NW_AGENT_NAME,
             started_at: traceCtx.startedAt,
-            metadata: {
-              resume_kind: "tool_approval",
+            metadata: this.buildTraceMetadata({
+              memory_id: pending.memoryId,
+              kind: "resume_tool_approval",
+              hil_session_id: pending.sessionId,
               approved,
               tool_count: pending.pendingToolCalls.length,
-            },
+              tool_names: pending.pendingToolCalls.map((t) => t.name),
+            }),
           },
           this.runResume(pending, approved, credentials),
         ),
@@ -691,7 +698,13 @@ export class AgentInstance {
       session_id: this.sid,
       agent_name: NW_AGENT_NAME,
       started_at: traceCtx.startedAt,
-      metadata: { resume_kind: "user_input", answer_kind: answer.kind },
+      metadata: this.buildTraceMetadata({
+        memory_id: pending.memoryId,
+        kind: "resume_user_input",
+        hil_session_id: pending.sessionId,
+        ask_user_kind: pending.kind,
+        answer_kind: answer.kind,
+      }),
     } as const;
     try {
       if (answer.kind === "cancel") {
@@ -759,6 +772,32 @@ export class AgentInstance {
     });
     yield { type: "tool_result", name: ASK_USER_TOOL, output };
     yield { type: "done" };
+  }
+
+  /**
+   * Compose the metadata bag attached to every TraceStart so Night's Watch UI
+   * can resolve the various ID surfaces a user runs into:
+   *   - sid                — cookie session id (vault scope, AgentInstance key)
+   *   - memory_id          — `agent-memory/raw/YYYY/MM/DD/NNNN.jsonl` file slug
+   *   - profile_name       — locked LLM profile (Haiku/Sonnet/Qwen) for this turn
+   *   - persona / persona_ref — soul resolution. May be null on first turn before
+   *                              persona_resolved fires.
+   *   - hil_session_id     — short-lived UUID for tool_approval / ask_user gates
+   *                          (only on resume traces).
+   *   - kind               — receive | resume_tool_approval | resume_user_input
+   * Caller appends turn-specific fields via `extra`.
+   */
+  private buildTraceMetadata(extra: Record<string, unknown>): Record<string, unknown> {
+    const profile = this.currentProfile;
+    return {
+      sid: this.sid,
+      profile_name: profile.name,
+      profile_provider: profile.provider,
+      model: profile.model,
+      persona: this.resolvedPersona ?? null,
+      persona_ref: this.resolvedRef ?? null,
+      ...extra,
+    };
   }
 
   /**
