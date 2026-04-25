@@ -29,6 +29,12 @@ function summary(s: string): string {
 }
 
 export function mapAgentEvent(ev: AgentEvent, ctx: MapContext): EventRecord | null {
+  // Drop high-frequency / non-recordable kinds BEFORE consuming a seq slot —
+  // otherwise the timeline shows visible gaps (#1 → #6) when a streamed
+  // assistant reply produces several text_delta chunks. mini-agent 의 chatStream
+  // 은 한 응답을 N 청크로 yield 하므로 N seq 가 통째로 소실되었음.
+  if (ev.type === "text_delta") return null;
+
   const ts = Date.now();
   const event_id = randomUUID();
   const seq = ctx.nextSeq();
@@ -165,9 +171,6 @@ export function mapAgentEvent(ev: AgentEvent, ctx: MapContext): EventRecord | nu
         payload: { message: ev.message },
         payload_summary: summary(ev.message),
       };
-    case "text_delta":
-      // 빈도 너무 높음 — drop. final `message` 로 충분.
-      return null;
     default: {
       // exhaustiveness check
       const _exhaustive: never = ev;
