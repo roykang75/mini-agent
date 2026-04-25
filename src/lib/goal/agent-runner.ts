@@ -33,9 +33,10 @@ import {
 import type { AutonomyConfig } from "./types";
 import { summonAgent } from "../agent/registry";
 import type { AgentInstance } from "../agent/instance";
-import type { AgentEvent } from "../types";
+import type { AgentEvent, PendingToolCall } from "../types";
 import type { SoulRequest } from "../souls/loader";
 import type { PersonaName } from "../souls/registry.generated";
+import type { ToolApprovalDecisionPayload } from "../observability/nw-trace";
 import { createLogger } from "../log";
 
 import { loadRuntimeLimits } from "../config/limits";
@@ -75,6 +76,11 @@ export interface AgentLike {
   ): AsyncGenerator<AgentEvent>;
   /** ADR-009 Amendment 2026-04-21 — goal-level 지속 agent 에서 iter 시작 시 호출. */
   clearPending?(): void;
+  /**
+   * ADR-009 + Night's Watch Phase 2 — autonomy policy 결정을 active trace 에 기록.
+   * trace 가 없거나 NW disabled 면 no-op 이도록 instance 가 흡수. fakes 는 omit 가능.
+   */
+  recordToolApprovalDecision?(payload: ToolApprovalDecisionPayload): void;
 }
 
 export interface AgentRunnerDeps {
@@ -198,6 +204,19 @@ export function createAgentRunner(
               },
               `tool_approval decision=${decision.decision}`,
             );
+
+            // Mirror the decision into Night's Watch trace (no-op if NW disabled
+            // or fake agent omits the method).
+            agent.recordToolApprovalDecision?.({
+              sessionId: ev.sessionId,
+              decision: decision.decision,
+              reason:
+                decision.decision === "auto_approve"
+                  ? "auto_approve"
+                  : decision.hil_trigger?.reason ?? "(unknown)",
+              trace: decision.trace,
+              toolCalls: ev.toolCalls,
+            });
 
             if (decision.decision === "auto_approve") {
               approvalsGranted++;

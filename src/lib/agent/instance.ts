@@ -47,6 +47,17 @@ import type {
 } from "../types";
 import { createLogger } from "../log";
 import {
+  newTraceContext,
+  pushSessionUpsert,
+  recordLlmError,
+  recordLlmRequest,
+  recordLlmResponse,
+  recordToolApprovalDecision as nwRecordToolApprovalDecision,
+  withNightWatchTrace,
+  type ToolApprovalDecisionPayload,
+  type TraceContext,
+} from "../observability/nw-trace";
+import {
   type SerializedAgentState,
   type SerializedPendingApproval,
   type SerializedPendingUserInput,
@@ -57,6 +68,9 @@ import {
 export { ASK_USER_TOOL } from "../skills/loader";
 
 const log = createLogger("agent");
+
+/** Identity name for Night's Watch ingestion (AgentIdentity.name + agent_name). */
+const NW_AGENT_NAME = "mini-agent";
 
 /** Working state TTL in seconds — matches sid cookie lifetime (24h). */
 export const SID_TTL_SEC = 24 * 60 * 60;
@@ -263,6 +277,11 @@ export class AgentInstance {
   private pendingUserInput: PendingUserInput | null = null;
   private profileName: string | null = null;
 
+  /** Active Night's Watch trace (one per receive/resume turn). null when idle. */
+  private currentTrace: TraceContext | null = null;
+  /** Whether session_upsert has been emitted for this AgentInstance. */
+  private nwSessionEmitted: boolean = false;
+
   constructor(sid: string, hydrated?: SerializedAgentState) {
     this.sid = sid;
     if (hydrated) {
@@ -381,9 +400,24 @@ export class AgentInstance {
     const memoryId = newMemorySessionId();
     await appendRaw(memoryId, "user_message", { content: userMessage, sid: this.sid });
 
+    const traceCtx = this.startTrace({ user_message: userMessage });
     try {
-      yield* withRawCapture(memoryId, this.runReceive(userMessage, personaReq, memoryId));
+      yield* withRawCapture(
+        memoryId,
+        withNightWatchTrace(
+          traceCtx,
+          {
+            trace_id: traceCtx.trace_id,
+            session_id: this.sid,
+            agent_name: NW_AGENT_NAME,
+            started_at: traceCtx.startedAt,
+            user_message: userMessage.slice(0, 1000),
+          },
+          this.runReceive(userMessage, personaReq, memoryId),
+        ),
+      );
     } finally {
+      this.currentTrace = null;
       await this.persist();
     }
   }
@@ -484,9 +518,30 @@ export class AgentInstance {
     const pending = this.pending;
     this.pending = null;
 
+    const traceCtx = this.startTrace({
+      user_message: `(resume approved=${approved} tools=${pending.pendingToolCalls.map((t) => t.name).join(",")})`,
+    });
     try {
-      yield* withRawCapture(pending.memoryId, this.runResume(pending, approved, credentials));
+      yield* withRawCapture(
+        pending.memoryId,
+        withNightWatchTrace(
+          traceCtx,
+          {
+            trace_id: traceCtx.trace_id,
+            session_id: this.sid,
+            agent_name: NW_AGENT_NAME,
+            started_at: traceCtx.startedAt,
+            metadata: {
+              resume_kind: "tool_approval",
+              approved,
+              tool_count: pending.pendingToolCalls.length,
+            },
+          },
+          this.runResume(pending, approved, credentials),
+        ),
+      );
     } finally {
+      this.currentTrace = null;
       await this.persist();
     }
   }
@@ -628,13 +683,34 @@ export class AgentInstance {
     const pending = this.pendingUserInput;
     this.pendingUserInput = null;
 
+    const traceCtx = this.startTrace({
+      user_message: `(resume user_input kind=${answer.kind})`,
+    });
+    const traceStart = {
+      trace_id: traceCtx.trace_id,
+      session_id: this.sid,
+      agent_name: NW_AGENT_NAME,
+      started_at: traceCtx.startedAt,
+      metadata: { resume_kind: "user_input", answer_kind: answer.kind },
+    } as const;
     try {
       if (answer.kind === "cancel") {
-        yield* withRawCapture(pending.memoryId, this.runCancelUserInput(pending));
+        yield* withRawCapture(
+          pending.memoryId,
+          withNightWatchTrace(traceCtx, traceStart, this.runCancelUserInput(pending)),
+        );
       } else {
-        yield* withRawCapture(pending.memoryId, this.runResumeUserInput(pending, answer));
+        yield* withRawCapture(
+          pending.memoryId,
+          withNightWatchTrace(
+            traceCtx,
+            traceStart,
+            this.runResumeUserInput(pending, answer),
+          ),
+        );
       }
     } finally {
+      this.currentTrace = null;
       await this.persist();
     }
   }
@@ -685,25 +761,72 @@ export class AgentInstance {
     yield { type: "done" };
   }
 
+  /**
+   * Start a Night's Watch trace for the current turn. Idempotent within a turn:
+   * if `currentTrace` is already set, return it. Also emits session_upsert on the
+   * very first trace of this AgentInstance — once per sid lifetime.
+   */
+  private startTrace(opts: { user_message?: string }): TraceContext {
+    if (this.currentTrace) return this.currentTrace;
+    const ctx = newTraceContext({
+      session_id: this.sid,
+      agent_name: NW_AGENT_NAME,
+    });
+    this.currentTrace = ctx;
+    if (!this.nwSessionEmitted) {
+      this.nwSessionEmitted = true;
+      const profile = this.currentProfile;
+      pushSessionUpsert({
+        session_id: this.sid,
+        agent_name: NW_AGENT_NAME,
+        sid: this.sid,
+        persona: this.resolvedPersona ?? undefined,
+        persona_ref: this.resolvedRef ?? undefined,
+        profile_name: profile.name,
+        started_at: this.createdAt,
+        last_active_at: this.lastActiveAt,
+      });
+    }
+    void opts;
+    return ctx;
+  }
+
   private async *agentLoop(memoryId: string): AsyncGenerator<AgentEvent> {
     while (true) {
+      const tools = getSkillTools();
+      const traceCtx = this.currentTrace;
+      const reqHandle = traceCtx
+        ? recordLlmRequest(traceCtx, {
+            model: this.modelId,
+            message_count: this.messages.length,
+            tool_count: tools.length,
+            system_chars: this.systemPrompt.length,
+          })
+        : null;
+
       let response: LLMResponse | undefined;
-      for await (const ev of this.llmClient.chatStream({
-        model: this.modelId,
-        max_tokens: 4096,
-        system: [
-          { type: "text", text: this.systemPrompt, cache_control: { type: "ephemeral" } },
-        ],
-        tools: getSkillTools(),
-        messages: this.messages,
-      })) {
-        if (ev.type === "text_delta") {
-          yield { type: "text_delta", delta: ev.text };
-        } else if (ev.type === "done") {
-          response = ev.response;
+      try {
+        for await (const ev of this.llmClient.chatStream({
+          model: this.modelId,
+          max_tokens: 4096,
+          system: [
+            { type: "text", text: this.systemPrompt, cache_control: { type: "ephemeral" } },
+          ],
+          tools,
+          messages: this.messages,
+        })) {
+          if (ev.type === "text_delta") {
+            yield { type: "text_delta", delta: ev.text };
+          } else if (ev.type === "done") {
+            response = ev.response;
+          }
         }
+      } catch (e) {
+        if (traceCtx && reqHandle) recordLlmError(traceCtx, reqHandle, e as Error);
+        throw e;
       }
       if (!response) throw new Error("agent: chatStream ended without done event");
+      if (traceCtx && reqHandle) recordLlmResponse(traceCtx, reqHandle, response);
 
       // Token / cache usage — budget 계산과 관찰성의 기초.
       // raw append middleware 가 자동으로 이 이벤트를 memory raw 에도 기록.
@@ -920,6 +1043,23 @@ export class AgentInstance {
     this.messages = [];
     this.pending = null;
     this.pendingUserInput = null;
+  }
+
+  /** Active Night's Watch trace_id (one per receive/resume turn), or null when idle. */
+  get currentTraceId(): string | null {
+    return this.currentTrace?.trace_id ?? null;
+  }
+
+  /**
+   * Emit a `tool_approval_decision` event into the active trace. Called by
+   * AgentRunner after `decideToolApproval()` resolves — the runner owns the
+   * autonomy policy but the trace context lives on this AgentInstance.
+   *
+   * No-op if there is no active trace (e.g., decision happened outside a turn).
+   */
+  recordToolApprovalDecision(payload: ToolApprovalDecisionPayload): void {
+    if (!this.currentTrace) return;
+    nwRecordToolApprovalDecision(this.currentTrace, payload);
   }
 
   /** Exposed for routes that need to validate approval sessionId before calling resume. */

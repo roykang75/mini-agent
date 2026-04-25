@@ -5,7 +5,15 @@
 
 import pino, { type Logger, type LoggerOptions } from "pino";
 
-export type Component = "agent" | "skill" | "vault" | "memory" | "llm" | "route" | "advisor";
+export type Component =
+  | "agent"
+  | "skill"
+  | "vault"
+  | "memory"
+  | "llm"
+  | "route"
+  | "advisor"
+  | "night-watch";
 
 const IS_DEV = process.env.NODE_ENV !== "production";
 
