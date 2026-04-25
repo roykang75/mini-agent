@@ -840,6 +840,21 @@ export class AgentInstance {
             message_count: this.messages.length,
             tool_count: tools.length,
             system_chars: this.systemPrompt.length,
+            // 전체 요청 본문 — 10KB 초과 시 nw-trace 가 sidecar (body op) 로 분리.
+            // system prompt 는 full text 로 담되 cache_control 메타는 그대로 보존.
+            fullBody: {
+              model: this.modelId,
+              max_tokens: 4096,
+              system: [
+                {
+                  type: "text",
+                  text: this.systemPrompt,
+                  cache_control: { type: "ephemeral" },
+                },
+              ],
+              tools,
+              messages: this.messages,
+            },
           })
         : null;
 

@@ -207,6 +207,12 @@ export interface LlmRequestSnapshot {
   system_chars: number;
   /** 첫 system 블록 프리뷰 — 디버깅 용. */
   system_preview?: string;
+  /**
+   * 전체 요청 본문 (system + messages + tools) — 10KB 초과 시 body sidecar 로
+   * 분리 전송되고 event 에는 body_ref 만 남는다. 프로바이더 API payload 와
+   * 동일 구조.
+   */
+  fullBody?: unknown;
 }
 
 export interface LlmRequestHandle {
@@ -215,12 +221,39 @@ export interface LlmRequestHandle {
   model: string;
 }
 
+/** 이 크기를 초과하는 body 는 sidecar (body op) 로 분리. plan §4.7. */
+const BODY_SIDECAR_THRESHOLD_BYTES = 10 * 1024;
+
+/**
+ * 주어진 body 를 JSON 직렬화하고 10KB 초과 시 `op:body` 푸시 + body_ref 반환.
+ * 임계치 미만이면 null — 호출자는 그대로 payload 에 인라인 저장.
+ */
+function pushBodyIfLarge(
+  ctx: TraceContext,
+  eventId: string,
+  kind: string,
+  body: unknown,
+): string | null {
+  if (body === undefined || body === null) return null;
+  let json: string;
+  try {
+    json = JSON.stringify(body);
+  } catch {
+    return null;
+  }
+  if (json.length <= BODY_SIDECAR_THRESHOLD_BYTES) return null;
+  const body_ref = `${ctx.trace_id}/${eventId}.${kind}.json`;
+  getNightWatchClient().push({ op: "body", body_ref, body });
+  return body_ref;
+}
+
 export function recordLlmRequest(
   ctx: TraceContext,
   snapshot: LlmRequestSnapshot,
 ): LlmRequestHandle {
   const event_id = randomUUID();
   const ts = Date.now();
+  const body_ref = pushBodyIfLarge(ctx, event_id, "llm_request", snapshot.fullBody);
   pushEvent({
     event_id,
     trace_id: ctx.trace_id,
@@ -235,6 +268,7 @@ export function recordLlmRequest(
       ...(snapshot.system_preview ? { system_preview: snapshot.system_preview } : {}),
     },
     payload_summary: `${snapshot.model} (${snapshot.message_count} msgs, ${snapshot.tool_count} tools)`,
+    ...(body_ref ? { body_ref } : {}),
   });
   return { event_id, started_at: ts, model: snapshot.model };
 }
@@ -246,6 +280,7 @@ export function recordLlmResponse(
 ): void {
   const ts = Date.now();
   const responseEventId = randomUUID();
+  const body_ref = pushBodyIfLarge(ctx, responseEventId, "llm_response", response);
   pushEvent({
     event_id: responseEventId,
     trace_id: ctx.trace_id,
@@ -266,6 +301,7 @@ export function recordLlmResponse(
       content_kinds: response.content.map((b) => b.type),
     },
     payload_summary: `stop=${response.stop_reason} in=${response.usage.input_tokens} out=${response.usage.output_tokens}`,
+    ...(body_ref ? { body_ref } : {}),
   });
   // 이후 yield 되는 tool_call / tool_result / chat_usage / message /
   // user_input_* 이벤트가 이 response 의 child 로 보이도록 컨텍스트에 고정.
