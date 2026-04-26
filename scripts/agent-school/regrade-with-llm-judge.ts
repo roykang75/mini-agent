@@ -100,16 +100,25 @@ async function main() {
   }
   const data = JSON.parse(readFileSync(file, "utf-8")) as Array<Record<string, unknown>>;
 
+  // Load calibration-set-v1 for task_id → question/expected lookup
+  const taskSet = JSON.parse(
+    readFileSync("/Users/roy/Workspace/agent/agent-curriculum/problems-calibration/2026-04-27/calibration-set-v1.json", "utf-8"),
+  ) as { tasks: Array<{ id: string; question: string; expected_answer: string[] }> };
+  const taskIndex = new Map(taskSet.tasks.map((t) => [t.id, t]));
+
   console.log(`[regrade] ${data.length} entries from ${file}`);
 
   const results: JudgeResult[] = [];
   for (const entry of data) {
-    const q = (entry.question as string) || "(unknown)";
-    const expected = (entry.expected_answer as string[]) || [];
-    const answer = (entry.final_answer as string) || (entry.answer as string) || "";
     const taskId = (entry.task_id as string) || "(?)";
     const tier = (entry.tier as string) || "?";
     const substringOutcome = (entry.outcome as string) || "?";
+
+    // Lookup from task set if entry doesn't have question/expected
+    const taskDef = taskIndex.get(taskId);
+    const q = (entry.question as string) || taskDef?.question || "(unknown)";
+    const expected = (entry.expected_answer as string[]) || taskDef?.expected_answer || [];
+    const answer = (entry.final_answer as string) || (entry.answer as string) || "";
 
     const j = await judge(q, expected, answer);
     const agreement = j.outcome === substringOutcome;
