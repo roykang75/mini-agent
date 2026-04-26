@@ -118,7 +118,7 @@ async function main() {
     const taskDef = taskIndex.get(taskId);
     const q = (entry.question as string) || taskDef?.question || "(unknown)";
     const expected = (entry.expected_answer as string[]) || taskDef?.expected_answer || [];
-    const answer = (entry.final_answer as string) || (entry.answer as string) || "";
+    const answer = (entry.final_answer as string) || (entry.answer as string) || (entry.advisor_answer as string) || "";
 
     const j = await judge(q, expected, answer);
     const agreement = j.outcome === substringOutcome;
