@@ -912,6 +912,7 @@ export class AgentInstance {
         );
         const joined = textBlocks.map((b) => b.text).join("\n").trim();
         if (joined.length > 0) {
+          const chainStarted = Date.now();
           const chain = await runVerifyChain(userMessage, joined, {
             plausibility_enabled: cfg.plausibility.enabled,
             plausibility_model: cfg.plausibility.model,
@@ -920,6 +921,7 @@ export class AgentInstance {
             prompt_version: cfg.verifier.prompt_version,
             reject_message: cfg.reject_message,
           });
+          const chainDuration = Date.now() - chainStarted;
           log.info(
             {
               event: "agent_turn_verify_chain",
@@ -927,9 +929,19 @@ export class AgentInstance {
               accepted: chain.accepted,
               plausibility_verdict: chain.plausibility?.verdict,
               verifier_verdict: chain.verifier?.verdict,
+              duration_ms: chainDuration,
             },
             "agent turn verify chain done",
           );
+          yield {
+            type: "verify_chain",
+            path: chain.path,
+            accepted: chain.accepted,
+            override_applied: !chain.accepted,
+            plausibility_verdict: chain.plausibility?.verdict,
+            verifier_verdict: chain.verifier?.verdict,
+            duration_ms: chainDuration,
+          };
           if (!chain.accepted) {
             const rejected = chain.final_answer;
             this.messages[this.messages.length - 1] = {

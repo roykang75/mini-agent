@@ -35,6 +35,7 @@ export type EventKind =
   | "chat_usage"
   | "message"
   | "text_delta"
+  | "verify_chain"
   | "done"
   | "error"
   | "agent_note";

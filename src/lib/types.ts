@@ -28,6 +28,15 @@ export type AgentEvent =
   | { type: "tool_rejected"; name: string }
   | { type: "text_delta"; delta: string }
   | { type: "message"; content: string }
+  | {
+      type: "verify_chain";
+      path: "plausibility_skip" | "verifier_applied" | "off";
+      accepted: boolean;
+      override_applied: boolean;
+      plausibility_verdict?: "YES" | "NO" | "PARSE_FAIL";
+      verifier_verdict?: "ACCEPT" | "REJECT" | "PARSE_FAIL";
+      duration_ms: number;
+    }
   | { type: "done" }
   | { type: "error"; message: string };
 

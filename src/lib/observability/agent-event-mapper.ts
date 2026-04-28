@@ -36,6 +36,7 @@ const CHILDREN_OF_LLM_RESPONSE = new Set([
   "user_input_request",
   "chat_usage",
   "message",
+  "verify_chain",
 ]);
 
 const TOOL_OUTPUT_PREVIEW_MAX = 4096;
@@ -187,6 +188,25 @@ export function mapAgentEvent(ev: AgentEvent, ctx: MapContext): EventRecord | nu
         kind: "llm_reasoning",
         payload: { content: ev.content },
         payload_summary: summary(ev.content),
+      };
+    case "verify_chain":
+      return {
+        ...base,
+        kind: "verify_chain",
+        duration_ms: ev.duration_ms,
+        status: ev.accepted ? "ok" : "refusal",
+        payload: {
+          path: ev.path,
+          accepted: ev.accepted,
+          override_applied: ev.override_applied,
+          plausibility_verdict: ev.plausibility_verdict,
+          verifier_verdict: ev.verifier_verdict,
+        },
+        payload_summary: summary(
+          `${ev.path} ${ev.accepted ? "ACCEPT" : "REJECT"}` +
+            (ev.plausibility_verdict ? ` plaus=${ev.plausibility_verdict}` : "") +
+            (ev.verifier_verdict ? ` verif=${ev.verifier_verdict}` : ""),
+        ),
       };
     case "done":
       return { ...base, kind: "done" };
