@@ -17,7 +17,7 @@
 import { AnthropicClient } from "./providers/anthropic";
 import type { LLMResponse } from "./types";
 import { runVerifyChain, type VerifyChainOptions, type VerifyChainResult } from "./verify";
-import { loadVerifierHookConfig } from "../config/verifier";
+import { loadVerifierHookConfig, isAdvisorHookActive } from "../config/verifier";
 import { createLogger } from "../log";
 
 const log = createLogger("advisor");
@@ -161,9 +161,9 @@ function resolveVerifyDecision(verify: AdvisorClientOptions["verify"]): VerifyDe
     return { run: true, opts: verify };
   }
 
-  // undefined / "auto" → config 파일 + env 따름
+  // undefined / "auto" → config 파일 + env 따름 (master AND advisor_hook 모두 ON 일 때)
   const cfg = loadVerifierHookConfig();
-  if (!cfg.enabled) return { run: false, opts: {} };
+  if (!isAdvisorHookActive(cfg)) return { run: false, opts: {} };
   return { run: true, opts: configToChainOptions(cfg) };
 }
 

@@ -7,13 +7,17 @@
  * 우선순위: env > file > code default.
  *
  * env 키 — pilot script 와 호환 유지 (memory: feedback_test_artifact_reuse):
- *   VERIFIER_HOOK              : "on"|"off" — 전체 enable
+ *   VERIFIER_HOOK              : "on"|"off" — master enable
+ *   VERIFIER_HOOK_ADVISOR      : "on"|"off" — advisor hook (step 1)
+ *   VERIFIER_HOOK_AGENT_TURN   : "on"|"off" — agent turn hook (step 2)
  *   VERIFIER_MODEL             : claude-opus-4-7 등
  *   VERIFIER_PROMPT_VERSION    : v1|v2|v3
  *   PLAUSIBILITY_CHECK         : "on"|"off"
  *   PLAUSIBILITY_MODEL         : claude-haiku-4-5-20251001 등
  *   PLAUSIBILITY_DEPTH_LIMIT   : 2 등 (Infinity = "inf"|"unlimited"|"none")
  *   VERIFIER_REJECT_MESSAGE    : reject 시 override 메시지
+ *
+ * 동작: 개별 hook 활성 = master `enabled` AND individual flag.
  */
 
 import { readFileSync } from "node:fs";
@@ -34,6 +38,8 @@ export interface VerifierConfig {
 
 export interface VerifierHookConfig {
   enabled: boolean;
+  advisor_hook: boolean;
+  agent_turn_hook: boolean;
   plausibility: PlausibilityConfig;
   verifier: VerifierConfig;
   reject_message: string;
@@ -41,6 +47,8 @@ export interface VerifierHookConfig {
 
 const DEFAULTS: VerifierHookConfig = {
   enabled: false,
+  advisor_hook: true,
+  agent_turn_hook: true,
   plausibility: {
     enabled: true,
     model: "claude-haiku-4-5-20251001",
@@ -71,6 +79,8 @@ interface FileVerifier {
 }
 interface FileShape {
   enabled?: unknown;
+  advisor_hook?: unknown;
+  agent_turn_hook?: unknown;
   plausibility?: FilePlausibility;
   verifier?: FileVerifier;
   reject_message?: unknown;
@@ -133,6 +143,8 @@ export function loadVerifierHookConfig(): VerifierHookConfig {
   const file = readConfigFile(resolveConfigPath());
 
   const fileEnabled = coerceBool(file?.enabled, DEFAULTS.enabled);
+  const fileAdvisorHook = coerceBool(file?.advisor_hook, DEFAULTS.advisor_hook);
+  const fileAgentTurnHook = coerceBool(file?.agent_turn_hook, DEFAULTS.agent_turn_hook);
   const filePlausEnabled = coerceBool(file?.plausibility?.enabled, DEFAULTS.plausibility.enabled);
   const filePlausModel = coerceString(file?.plausibility?.model, DEFAULTS.plausibility.model);
   const filePlausDepth = coerceDepthLimit(file?.plausibility?.depth_limit, DEFAULTS.plausibility.depth_limit);
@@ -142,6 +154,8 @@ export function loadVerifierHookConfig(): VerifierHookConfig {
 
   const merged: VerifierHookConfig = {
     enabled: envBoolOr("VERIFIER_HOOK", fileEnabled),
+    advisor_hook: envBoolOr("VERIFIER_HOOK_ADVISOR", fileAdvisorHook),
+    agent_turn_hook: envBoolOr("VERIFIER_HOOK_AGENT_TURN", fileAgentTurnHook),
     plausibility: {
       enabled: envBoolOr("PLAUSIBILITY_CHECK", filePlausEnabled),
       model: envStringOr("PLAUSIBILITY_MODEL", filePlausModel),
@@ -156,6 +170,16 @@ export function loadVerifierHookConfig(): VerifierHookConfig {
 
   cached = merged;
   return merged;
+}
+
+/** Master ON AND advisor hook ON. step 1 의 advisor.ts 가 사용. */
+export function isAdvisorHookActive(cfg: VerifierHookConfig = loadVerifierHookConfig()): boolean {
+  return cfg.enabled && cfg.advisor_hook;
+}
+
+/** Master ON AND agent turn hook ON. step 2 의 instance.ts 가 사용. */
+export function isAgentTurnHookActive(cfg: VerifierHookConfig = loadVerifierHookConfig()): boolean {
+  return cfg.enabled && cfg.agent_turn_hook;
 }
 
 /** Test-only — drop cached value so next loadVerifierHookConfig re-reads. */

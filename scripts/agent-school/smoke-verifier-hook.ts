@@ -19,7 +19,12 @@
 
 import { runVerifyChain, runPlausibilityCheck, runVerifierCheck } from "../../src/lib/llm/verify";
 import { askAdvisor } from "../../src/lib/llm/advisor";
-import { loadVerifierHookConfig, __resetVerifierHookConfigCache } from "../../src/lib/config/verifier";
+import {
+  loadVerifierHookConfig,
+  isAdvisorHookActive,
+  isAgentTurnHookActive,
+  __resetVerifierHookConfigCache,
+} from "../../src/lib/config/verifier";
 
 try {
   (process as unknown as { loadEnvFile?: (p?: string) => void }).loadEnvFile?.(".env.local");
@@ -64,6 +69,39 @@ async function step1_configLoading() {
   );
   delete process.env.VERIFIER_HOOK;
   delete process.env.PLAUSIBILITY_DEPTH_LIMIT;
+  __resetVerifierHookConfigCache();
+
+  // master OFF → 둘 다 비활성
+  __resetVerifierHookConfigCache();
+  const cfgMasterOff = loadVerifierHookConfig();
+  record(
+    "master OFF → both hooks inactive",
+    !isAdvisorHookActive(cfgMasterOff) && !isAgentTurnHookActive(cfgMasterOff),
+    `advisor_active=${isAdvisorHookActive(cfgMasterOff)}, agent_turn_active=${isAgentTurnHookActive(cfgMasterOff)}`,
+  );
+
+  // master ON, individual default true → 둘 다 활성
+  process.env.VERIFIER_HOOK = "on";
+  __resetVerifierHookConfigCache();
+  const cfgMasterOn = loadVerifierHookConfig();
+  record(
+    "master ON → both hooks active (default)",
+    isAdvisorHookActive(cfgMasterOn) && isAgentTurnHookActive(cfgMasterOn),
+    `advisor_active=${isAdvisorHookActive(cfgMasterOn)}, agent_turn_active=${isAgentTurnHookActive(cfgMasterOn)}`,
+  );
+
+  // master ON + agent_turn OFF → advisor 만 ON
+  process.env.VERIFIER_HOOK_AGENT_TURN = "off";
+  __resetVerifierHookConfigCache();
+  const cfgPartial = loadVerifierHookConfig();
+  record(
+    "master ON + agent_turn OFF → advisor only",
+    isAdvisorHookActive(cfgPartial) && !isAgentTurnHookActive(cfgPartial),
+    `advisor_active=${isAdvisorHookActive(cfgPartial)}, agent_turn_active=${isAgentTurnHookActive(cfgPartial)}`,
+  );
+
+  delete process.env.VERIFIER_HOOK;
+  delete process.env.VERIFIER_HOOK_AGENT_TURN;
   __resetVerifierHookConfigCache();
 }
 

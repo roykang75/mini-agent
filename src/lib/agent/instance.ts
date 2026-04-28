@@ -92,6 +92,8 @@ export const REQUEST_CREDENTIAL_TOOL = "request_credential";
 export const ASK_ADVISOR_TOOL = "ask_advisor";
 
 import { loadRuntimeLimits } from "../config/limits";
+import { isAgentTurnHookActive, loadVerifierHookConfig } from "../config/verifier";
+import { runVerifyChain } from "../llm/verify";
 
 /**
  * Retry 상수들은 runtime-limits config 에서 온다. env (RETRY_LIMIT /
@@ -501,7 +503,7 @@ export class AgentInstance {
 
     this.messages.push({ role: "user", content: userMessage });
 
-    yield* this.agentLoop(memoryId);
+    yield* this.agentLoop(memoryId, userMessage);
   }
 
   /** HIL 승인/거부 후 내가 중단된 지점부터 이어감. */
@@ -830,7 +832,7 @@ export class AgentInstance {
     return ctx;
   }
 
-  private async *agentLoop(memoryId: string): AsyncGenerator<AgentEvent> {
+  private async *agentLoop(memoryId: string, userMessage?: string): AsyncGenerator<AgentEvent> {
     while (true) {
       const tools = getSkillTools();
       const traceCtx = this.currentTrace;
@@ -895,15 +897,57 @@ export class AgentInstance {
 
       this.messages.push({ role: "assistant", content: response.content });
 
+      const toolUseBlocks = response.content.filter(
+        (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
+      );
+
+      // Verify hook (step 2 — production gate, 18-세션 D adversarial robust 통과).
+      // final turn 의 assistant text 만 검증. tool_use 가 함께 있으면 thinking 유사
+      // 중간 출력이라 skip. resume / userInput 류는 userMessage 미전달 → skip.
+      const isFinalTurn = toolUseBlocks.length === 0 && response.stop_reason !== "tool_use";
+      if (isFinalTurn && userMessage && isAgentTurnHookActive()) {
+        const cfg = loadVerifierHookConfig();
+        const textBlocks = response.content.filter(
+          (b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
+        );
+        const joined = textBlocks.map((b) => b.text).join("\n").trim();
+        if (joined.length > 0) {
+          const chain = await runVerifyChain(userMessage, joined, {
+            plausibility_enabled: cfg.plausibility.enabled,
+            plausibility_model: cfg.plausibility.model,
+            depth_limit: cfg.plausibility.depth_limit,
+            verifier_model: cfg.verifier.model,
+            prompt_version: cfg.verifier.prompt_version,
+            reject_message: cfg.reject_message,
+          });
+          log.info(
+            {
+              event: "agent_turn_verify_chain",
+              path: chain.path,
+              accepted: chain.accepted,
+              plausibility_verdict: chain.plausibility?.verdict,
+              verifier_verdict: chain.verifier?.verdict,
+            },
+            "agent turn verify chain done",
+          );
+          if (!chain.accepted) {
+            const rejected = chain.final_answer;
+            this.messages[this.messages.length - 1] = {
+              role: "assistant",
+              content: [{ type: "text", text: rejected }],
+            };
+            yield { type: "message", content: rejected };
+            yield { type: "done" };
+            break;
+          }
+        }
+      }
+
       for (const block of response.content) {
         if (block.type === "text") {
           yield { type: "message", content: block.text };
         }
       }
-
-      const toolUseBlocks = response.content.filter(
-        (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
-      );
 
       if (toolUseBlocks.length > 0) {
         // ask_user 분기: built-in UX 게이트, approval 경로와 완전히 분리.
