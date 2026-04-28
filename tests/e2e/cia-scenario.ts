@@ -300,3 +300,5 @@ main().catch((e) => {
   console.error(`\n[FAIL] ${(e as Error).message}`);
   process.exit(1);
 });
+
+export {};
