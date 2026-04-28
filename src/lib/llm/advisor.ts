@@ -16,6 +16,8 @@
 
 import { AnthropicClient } from "./providers/anthropic";
 import type { LLMResponse } from "./types";
+import { runVerifyChain, type VerifyChainOptions, type VerifyChainResult } from "./verify";
+import { loadVerifierHookConfig } from "../config/verifier";
 import { createLogger } from "../log";
 
 const log = createLogger("advisor");
@@ -33,6 +35,15 @@ export interface AdvisorClientOptions {
   baseURL?: string;
   model?: string;
   maxTokens?: number;
+  /**
+   * verifier+plausibility hook (v16 best, 18-세션 D adversarial robust 통과).
+   *  - undefined / "auto" : config 파일 + env 따름 (default)
+   *  - "on"               : 강제 ON (config 의 모델/depth/version 그대로)
+   *  - "off"              : 강제 OFF (정상 flow)
+   *  - VerifyChainOptions : 옵션 직접 inject
+   * 운영 ON / off-the-record OFF (NEXT.md step 1).
+   */
+  verify?: "auto" | "on" | "off" | VerifyChainOptions;
 }
 
 export async function askAdvisor(
@@ -114,5 +125,69 @@ export async function askAdvisor(
     "advisor responded",
   );
 
-  return text;
+  const verifyResolved = resolveVerifyDecision(opts.verify);
+  if (!verifyResolved.run) return text;
+
+  const chainStarted = Date.now();
+  const chainResult = await runVerifyChain(input.question, text, verifyResolved.opts);
+  log.info(
+    {
+      event: "advisor_verify_chain",
+      path: chainResult.path,
+      accepted: chainResult.accepted,
+      plausibility_verdict: chainResult.plausibility?.verdict,
+      verifier_verdict: chainResult.verifier?.verdict,
+      duration_ms: Date.now() - chainStarted,
+    },
+    "advisor verify chain done",
+  );
+  return chainResult.final_answer;
+}
+
+interface VerifyDecision {
+  run: boolean;
+  opts: VerifyChainOptions;
+}
+
+function resolveVerifyDecision(verify: AdvisorClientOptions["verify"]): VerifyDecision {
+  if (verify === "off") return { run: false, opts: {} };
+
+  if (verify === "on") {
+    const cfg = loadVerifierHookConfig();
+    return { run: true, opts: configToChainOptions(cfg) };
+  }
+
+  if (verify && typeof verify === "object") {
+    return { run: true, opts: verify };
+  }
+
+  // undefined / "auto" → config 파일 + env 따름
+  const cfg = loadVerifierHookConfig();
+  if (!cfg.enabled) return { run: false, opts: {} };
+  return { run: true, opts: configToChainOptions(cfg) };
+}
+
+function configToChainOptions(cfg: ReturnType<typeof loadVerifierHookConfig>): VerifyChainOptions {
+  return {
+    plausibility_enabled: cfg.plausibility.enabled,
+    plausibility_model: cfg.plausibility.model,
+    depth_limit: cfg.plausibility.depth_limit,
+    verifier_model: cfg.verifier.model,
+    prompt_version: cfg.verifier.prompt_version,
+    reject_message: cfg.reject_message,
+  };
+}
+
+/**
+ * Advisor flow 와 별개로 (question, answer) 쌍을 v16 verify chain 으로 검증.
+ * Night's Watch wire (step 2) 가 main agent 의 turn output 을 검증할 때 사용.
+ *
+ * config + env 의 toggle 무시. 명시적 opts 만 사용 (caller 가 책임).
+ */
+export async function verifyAdvisorAnswer(
+  question: string,
+  answer: string,
+  opts: VerifyChainOptions = {},
+): Promise<VerifyChainResult> {
+  return runVerifyChain(question, answer, opts);
 }

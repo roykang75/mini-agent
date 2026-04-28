@@ -1,0 +1,15 @@
+{
+  "$schema": "./verifier-hook.schema.json",
+  "_doc": "verifier+plausibility hook config (v16 best, 18-세션 D adversarial robust 통과). UI 편집 대상 — env override 우선, file fallback, code default. operating priority — production-ready gating 통과.",
+  "enabled": false,
+  "plausibility": {
+    "enabled": true,
+    "model": "claude-haiku-4-5-20251001",
+    "depth_limit": 2
+  },
+  "verifier": {
+    "model": "claude-opus-4-7",
+    "prompt_version": "v3"
+  },
+  "reject_message": "모른다 / 알 수 없다 (verifier rejected)"
+}

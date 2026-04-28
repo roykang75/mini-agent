@@ -13,6 +13,7 @@ export type Component =
   | "llm"
   | "route"
   | "advisor"
+  | "verify"
   | "night-watch";
 
 const IS_DEV = process.env.NODE_ENV !== "production";
