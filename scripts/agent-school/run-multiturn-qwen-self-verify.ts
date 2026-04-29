@@ -207,7 +207,10 @@ function inferCompactVerdict(text: string, kind: "plausibility" | "verifier"): "
 }
 
 function extractMainAnswer(rawAnswer: string, reasoning: string): string {
+  const UNKNOWN_PAT = /모른다\s*\/\s*알 수 없다|모른다|알 수 없다|모르겠|확실하지 않/i;
   const normalize = (candidate: string): string => {
+    const unknown = candidate.match(UNKNOWN_PAT)?.[0];
+    if (unknown) return "모른다 / 알 수 없다";
     const clipped = candidate
       .split(/`|matches all constraints|all constraints perfectly|Ready\.?✅?/i)[0]
       .trim();
@@ -239,6 +242,12 @@ function extractMainAnswer(rawAnswer: string, reasoning: string): string {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find((line) => line && !/^here's a thinking process/i.test(line));
+  if (rawSingleLine) {
+    const normalized = normalize(rawSingleLine);
+    if (isValid(normalized)) return normalized;
+  }
+  const combined = `${rawAnswer}\n${reasoning}`;
+  if (UNKNOWN_PAT.test(combined)) return "모른다 / 알 수 없다";
   return rawSingleLine ?? "";
 }
 
