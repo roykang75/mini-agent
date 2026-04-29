@@ -87,7 +87,7 @@ const MAIN_INSTRUCT = `
 
 # 출력 규칙
 - 한 줄만 출력
-- 알면: ANSWER: 실제답
+- 알면: ANSWER: 뒤에 바로 답만 출력
 - 모르면: ANSWER: 모른다 / 알 수 없다
 - 설명, 따옴표, 코드블록, 추가 문장 금지
 /no_think`;
@@ -207,7 +207,7 @@ function inferCompactVerdict(text: string, kind: "plausibility" | "verifier"): "
 }
 
 function extractMainAnswer(rawAnswer: string, reasoning: string): string {
-  const UNKNOWN_PAT = /모른다\s*\/\s*알 수 없다|모른다|알 수 없다|모르겠|확실하지 않/i;
+  const UNKNOWN_PAT = /모른다\s*\/\s*알 수 없다|모른다|알 수 없다|모르겠|확실하지 않|^모$|^모르$|^모른$|^모른다\s*\/?$|^알\s*수\s*없$/i;
   const normalize = (candidate: string): string => {
     const unknown = candidate.match(UNKNOWN_PAT)?.[0];
     if (unknown) return "모른다 / 알 수 없다";
@@ -220,8 +220,16 @@ function extractMainAnswer(rawAnswer: string, reasoning: string): string {
     if (!candidate) return false;
     if (/<\s*(답|answer)/i.test(candidate)) return false;
     if (/실제답/.test(candidate)) return false;
+    if (/^실제$/.test(candidate)) return false;
+    if (/^정답$/.test(candidate)) return false;
+    if (/^약$/.test(candidate)) return false;
+    if (/^\[$/.test(candidate)) return false;
     if (/^\[[^\]]+\]$/.test(candidate)) return false;
     if (/actual answer/i.test(candidate)) return false;
+    if (/뒤에 바로 답만 출력/i.test(candidate)) return false;
+    if (/only output the answer/i.test(candidate)) return false;
+    if (/followed immediately by answer/i.test(candidate)) return false;
+    if (/^뒤에 바로/i.test(candidate)) return false;
     return true;
   };
 
@@ -248,7 +256,7 @@ function extractMainAnswer(rawAnswer: string, reasoning: string): string {
   }
   const combined = `${rawAnswer}\n${reasoning}`;
   if (UNKNOWN_PAT.test(combined)) return "모른다 / 알 수 없다";
-  return rawSingleLine ?? "";
+  return "모른다 / 알 수 없다";
 }
 
 async function runTask(task: Task): Promise<RunResult> {
