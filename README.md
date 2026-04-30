@@ -186,3 +186,48 @@ POST /chat → Agent Loop → tool_use 감지
 | `read_file` | 파일 내용 읽기 |
 | `write_file` | 파일 내용 쓰기 (디렉토리 자동 생성) |
 | `run_command` | 쉘 명령 실행 (30초 타임아웃) |
+
+## Memory Recall — 4-block 토글
+
+agent 가 매 turn 의 system prompt 에 외부 컨텍스트를 자동 주입한다. 4 종류로 분리되어 있고 환경변수로 개별 on/off 가능. 14 차 ON/OFF A/B 측정으로 silent utilization 효과 입증, 15 차 ablation 인프라 작업.
+
+| 블록 | env 토글 (default ON) | 출처 |
+|---|---|---|
+| `<agent_memory_recall>` | `MEMORY_RECALL_MEMORY=off` | `agent-memory/episodes/`, `agent-memory/working/` |
+| `<curriculum_recall>` | `MEMORY_RECALL_CURRICULUM=off` | `agent-curriculum/analyses/` |
+| `<self_map_recall>` | `MEMORY_RECALL_SELF_MAP=off` | persona self-map (default persona 는 비어 있음) |
+| `<my_recent_sessions>` | `MEMORY_RECALL_RECENT_SESSIONS=off` | `agent-memory/episodes/` 최근 N |
+
+전체 끄기: `MEMORY_RECALL=off` (기존 14 차 protocol 호환).
+
+진단 도구 — `scripts/recall-diagnose.ts`:
+
+```bash
+npx tsx scripts/recall-diagnose.ts --query "임의의 프롬프트" --model claude-haiku-4-5-20251001
+```
+
+`composeCombinedRecall` 을 직접 호출해 4 블록 별 hits 수와 system prompt preview 출력. 14 차 / 15 차 측정 시 recall 주입 sanity 검증에 사용.
+
+## Goal max_tokens 환경변수
+
+`GOAL_MAX_TOKENS` (default 4096) 로 goal-driven loop 의 LLM `max_tokens` cap 조정. 큰 코퍼스 task (예: agent-curriculum/analyses/ 12+ 파일 cluster index) 에서 4096 이 부족해 tool_use 가 truncated 되는 경우 8192 등으로 상향. 14 차 시점 코퍼스 (6 파일) 기준으로 4096 이 적절했지만 코퍼스 증가 시 환경변수 우회.
+
+```bash
+GOAL_MAX_TOKENS=8192 pnpm dev
+```
+
+## Recall ablation runner
+
+`scripts/agent-school/run-recall-ablation.ts` — 6 condition × 3 idx = 18 run 통합 runner. condition 사이마다 dev server 재시작 + Redis 자동 클리어 + status polling 으로 깨끗하게 측정.
+
+```bash
+npx tsx scripts/agent-school/run-recall-ablation.ts
+```
+
+env: `ANTHROPIC_API_KEY`, `AGENT_MEMORY_DIR`, `CURRICULUM_DIR` 필수. `REDIS_URL` (default `redis://192.168.1.218:6379`) optional. 결과는 `agent-curriculum/runs-recall-ablation/{date}/raw-{TS}.json` 로 dump.
+
+## Memory recall finding (15 차 v2 ablation)
+
+본문에 "shell 절대 금지" 강하게 명시해도 LLM 의 tool 선택을 deterministic 하게 막지 못한다 (Haiku 4.5 기준 17/18 이 첫 turn 에 `run_command` 시도). 진짜 차단은 goal frontmatter 의 `allow_shell:false` policy layer. ablation protocol 설계 시 본문 명시는 약한 signal 로 가정하고, task family 자체를 shell-free 하게 재설계하는 쪽이 신뢰성 높다.
+
+상세 — `agent-curriculum/analyses/2026-05-01-recall-ablation.md`.
