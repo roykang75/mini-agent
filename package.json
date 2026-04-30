@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "next start",
     "test:llm-profiles": "node_modules/.bin/jiti scripts/test-llm-profiles.ts",
+    "test:local-main-release": "node_modules/.bin/jiti scripts/test-local-main-release.ts",
     "test:openai-compat-stream": "node_modules/.bin/jiti scripts/test-openai-compat-stream.ts",
     "lint": "eslint"
   },
