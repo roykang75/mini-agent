@@ -15,6 +15,11 @@
  *   PLAUSIBILITY_CHECK         : "on"|"off"
  *   PLAUSIBILITY_MODEL         : claude-haiku-4-5-20251001 등
  *   PLAUSIBILITY_DEPTH_LIMIT   : 2 등 (Infinity = "inf"|"unlimited"|"none")
+ *   VERIFIER_STRATEGY          : anthropic-best|local-gemma-current|auto
+ *   VERIFIER_HISTORY_TURNS     : history window size for contextual verify
+ *   VERIFIER_SKIP_POLICY       : legacy-all-depth|easy-only-depth
+ *   VERIFIER_INFER_RUNTIME_CATEGORY : "on"|"off"
+ *   VERIFIER_FABRICATION_TAIL_HARD_GUARD : "on"|"off"
  *   VERIFIER_REJECT_MESSAGE    : reject 시 override 메시지
  *
  * 동작: 개별 hook 활성 = master `enabled` AND individual flag.
@@ -23,7 +28,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type { PromptVersion } from "../llm/verify";
+import type { PromptVersion, SkipPolicy, VerifyStrategy } from "../llm/verify";
 
 export interface PlausibilityConfig {
   enabled: boolean;
@@ -36,12 +41,21 @@ export interface VerifierConfig {
   prompt_version: PromptVersion;
 }
 
+export interface RuntimePolicyConfig {
+  strategy: VerifyStrategy;
+  history_turns: number;
+  infer_runtime_category: boolean;
+  skip_policy: SkipPolicy;
+  fabrication_tail_hard_guard: boolean;
+}
+
 export interface VerifierHookConfig {
   enabled: boolean;
   advisor_hook: boolean;
   agent_turn_hook: boolean;
   plausibility: PlausibilityConfig;
   verifier: VerifierConfig;
+  runtime_policy: RuntimePolicyConfig;
   reject_message: string;
 }
 
@@ -57,6 +71,13 @@ const DEFAULTS: VerifierHookConfig = {
   verifier: {
     model: "claude-opus-4-7",
     prompt_version: "v3",
+  },
+  runtime_policy: {
+    strategy: "auto",
+    history_turns: 4,
+    infer_runtime_category: true,
+    skip_policy: "easy-only-depth",
+    fabrication_tail_hard_guard: true,
   },
   reject_message: "모른다 / 알 수 없다 (verifier rejected)",
 };
@@ -77,12 +98,20 @@ interface FileVerifier {
   model?: unknown;
   prompt_version?: unknown;
 }
+interface FileRuntimePolicy {
+  strategy?: unknown;
+  history_turns?: unknown;
+  infer_runtime_category?: unknown;
+  skip_policy?: unknown;
+  fabrication_tail_hard_guard?: unknown;
+}
 interface FileShape {
   enabled?: unknown;
   advisor_hook?: unknown;
   agent_turn_hook?: unknown;
   plausibility?: FilePlausibility;
   verifier?: FileVerifier;
+  runtime_policy?: FileRuntimePolicy;
   reject_message?: unknown;
 }
 
@@ -135,6 +164,21 @@ function coercePromptVersion(v: unknown, fallback: PromptVersion): PromptVersion
   return fallback;
 }
 
+function coerceVerifyStrategy(v: unknown, fallback: VerifyStrategy): VerifyStrategy {
+  if (v === "anthropic-best" || v === "local-gemma-current" || v === "auto") return v;
+  return fallback;
+}
+
+function coerceSkipPolicy(v: unknown, fallback: SkipPolicy): SkipPolicy {
+  if (v === "legacy-all-depth" || v === "easy-only-depth") return v;
+  return fallback;
+}
+
+function coerceNonNegativeInt(v: unknown, fallback: number): number {
+  if (typeof v === "number" && Number.isInteger(v) && v >= 0) return v;
+  return fallback;
+}
+
 let cached: VerifierHookConfig | null = null;
 
 export function loadVerifierHookConfig(): VerifierHookConfig {
@@ -150,6 +194,17 @@ export function loadVerifierHookConfig(): VerifierHookConfig {
   const filePlausDepth = coerceDepthLimit(file?.plausibility?.depth_limit, DEFAULTS.plausibility.depth_limit);
   const fileVerifierModel = coerceString(file?.verifier?.model, DEFAULTS.verifier.model);
   const fileVerifierVersion = coercePromptVersion(file?.verifier?.prompt_version, DEFAULTS.verifier.prompt_version);
+  const fileStrategy = coerceVerifyStrategy(file?.runtime_policy?.strategy, DEFAULTS.runtime_policy.strategy);
+  const fileHistoryTurns = coerceNonNegativeInt(file?.runtime_policy?.history_turns, DEFAULTS.runtime_policy.history_turns);
+  const fileInferRuntimeCategory = coerceBool(
+    file?.runtime_policy?.infer_runtime_category,
+    DEFAULTS.runtime_policy.infer_runtime_category,
+  );
+  const fileSkipPolicy = coerceSkipPolicy(file?.runtime_policy?.skip_policy, DEFAULTS.runtime_policy.skip_policy);
+  const fileTailHardGuard = coerceBool(
+    file?.runtime_policy?.fabrication_tail_hard_guard,
+    DEFAULTS.runtime_policy.fabrication_tail_hard_guard,
+  );
   const fileReject = coerceString(file?.reject_message, DEFAULTS.reject_message);
 
   const merged: VerifierHookConfig = {
@@ -164,6 +219,21 @@ export function loadVerifierHookConfig(): VerifierHookConfig {
     verifier: {
       model: envStringOr("VERIFIER_MODEL", fileVerifierModel),
       prompt_version: coercePromptVersion(process.env.VERIFIER_PROMPT_VERSION, fileVerifierVersion),
+    },
+    runtime_policy: {
+      strategy: coerceVerifyStrategy(process.env.VERIFIER_STRATEGY, fileStrategy),
+      history_turns: (() => {
+        const raw = process.env.VERIFIER_HISTORY_TURNS;
+        if (raw === undefined || raw === "") return fileHistoryTurns;
+        const n = Number(raw);
+        return Number.isInteger(n) && n >= 0 ? n : fileHistoryTurns;
+      })(),
+      infer_runtime_category: envBoolOr("VERIFIER_INFER_RUNTIME_CATEGORY", fileInferRuntimeCategory),
+      skip_policy: coerceSkipPolicy(process.env.VERIFIER_SKIP_POLICY, fileSkipPolicy),
+      fabrication_tail_hard_guard: envBoolOr(
+        "VERIFIER_FABRICATION_TAIL_HARD_GUARD",
+        fileTailHardGuard,
+      ),
     },
     reject_message: envStringOr("VERIFIER_REJECT_MESSAGE", fileReject),
   };

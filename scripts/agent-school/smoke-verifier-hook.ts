@@ -54,21 +54,30 @@ async function step1_configLoading() {
       cfgDefault.plausibility.depth_limit === 2 &&
       cfgDefault.plausibility.model.includes("haiku") &&
       cfgDefault.verifier.model === "claude-opus-4-7" &&
-      cfgDefault.verifier.prompt_version === "v3",
-    `enabled=${cfgDefault.enabled}, plaus=${cfgDefault.plausibility.model}, depth=${cfgDefault.plausibility.depth_limit}, verifier=${cfgDefault.verifier.model}, version=${cfgDefault.verifier.prompt_version}`,
+      cfgDefault.verifier.prompt_version === "v3" &&
+      cfgDefault.runtime_policy.strategy === "auto" &&
+      cfgDefault.runtime_policy.skip_policy === "easy-only-depth",
+    `enabled=${cfgDefault.enabled}, plaus=${cfgDefault.plausibility.model}, depth=${cfgDefault.plausibility.depth_limit}, verifier=${cfgDefault.verifier.model}, version=${cfgDefault.verifier.prompt_version}, strategy=${cfgDefault.runtime_policy.strategy}, skip=${cfgDefault.runtime_policy.skip_policy}`,
   );
 
   __resetVerifierHookConfigCache();
   process.env.VERIFIER_HOOK = "on";
   process.env.PLAUSIBILITY_DEPTH_LIMIT = "5";
+  process.env.VERIFIER_STRATEGY = "local-gemma-current";
+  process.env.VERIFIER_HISTORY_TURNS = "6";
   const cfgEnv = loadVerifierHookConfig();
   record(
     "env override applied",
-    cfgEnv.enabled === true && cfgEnv.plausibility.depth_limit === 5,
-    `enabled=${cfgEnv.enabled}, depth=${cfgEnv.plausibility.depth_limit}`,
+    cfgEnv.enabled === true &&
+      cfgEnv.plausibility.depth_limit === 5 &&
+      cfgEnv.runtime_policy.strategy === "local-gemma-current" &&
+      cfgEnv.runtime_policy.history_turns === 6,
+    `enabled=${cfgEnv.enabled}, depth=${cfgEnv.plausibility.depth_limit}, strategy=${cfgEnv.runtime_policy.strategy}, history_turns=${cfgEnv.runtime_policy.history_turns}`,
   );
   delete process.env.VERIFIER_HOOK;
   delete process.env.PLAUSIBILITY_DEPTH_LIMIT;
+  delete process.env.VERIFIER_STRATEGY;
+  delete process.env.VERIFIER_HISTORY_TURNS;
   __resetVerifierHookConfigCache();
 
   // master OFF → 둘 다 비활성

@@ -21,7 +21,15 @@ const log = createLogger("verify");
 export type PlausibilityVerdict = "YES" | "NO" | "PARSE_FAIL";
 export type VerifierVerdict = "ACCEPT" | "REJECT" | "PARSE_FAIL";
 export type PromptVersion = "v1" | "v2" | "v3";
+export type VerifyStrategy = "anthropic-best" | "local-gemma-current" | "auto";
+export type ResolvedVerifyStrategy = Exclude<VerifyStrategy, "auto">;
+export type SkipPolicy = "legacy-all-depth" | "easy-only-depth";
 export type ChainPath = "plausibility_skip" | "verifier_applied" | "off";
+
+export interface VerifyHistoryTurn {
+  user_msg: string;
+  assistant_answer: string;
+}
 
 export interface PlausibilityResult {
   verdict: PlausibilityVerdict;
@@ -37,6 +45,10 @@ export interface VerifierResult {
 }
 
 export interface VerifyChainOptions {
+  /** 운영 lane. auto 면 main profile 기준으로 resolve. default: anthropic-best */
+  strategy?: VerifyStrategy;
+  /** 이전 user/assistant turn history (referent 해소용). */
+  history?: VerifyHistoryTurn[];
   /** Plausibility 모델. default: claude-haiku-4-5-20251001 */
   plausibility_model?: string;
   /** Plausibility 비활성화 (verifier 만 돌림). default: true (활성) */
@@ -54,6 +66,15 @@ export interface VerifyChainOptions {
   /** v3 prompt 에 쓰이는 task 컨텍스트 (선택) */
   tier?: string;
   category?: string;
+  /** category 미지정 시 runtime heuristic 으로 추론. default: false */
+  infer_runtime_category?: boolean;
+  /** local-gemma-current 에서 쓸 skip 정책. default: strategy별 상이 */
+  skip_policy?: SkipPolicy;
+  /** fabrication-cascade turn3+ ACCEPT tail 을 hard reject. default: strategy별 상이 */
+  fabrication_tail_hard_guard?: boolean;
+  /** strategy=auto resolve 용 main profile metadata. */
+  main_model?: string;
+  main_provider?: string;
 
   /** 호출 클라이언트 / API key (test 용) */
   client?: AnthropicClient;
@@ -70,6 +91,9 @@ export interface VerifyChainResult {
   final_answer: string;
   plausibility?: PlausibilityResult;
   verifier?: VerifierResult;
+  strategy: ResolvedVerifyStrategy;
+  category?: string;
+  turn_index: number;
 }
 
 const DEFAULT_PLAUSIBILITY_MODEL = "claude-haiku-4-5-20251001";
@@ -77,10 +101,43 @@ const DEFAULT_VERIFIER_MODEL = "claude-opus-4-7";
 const DEFAULT_PROMPT_VERSION: PromptVersion = "v3";
 const DEFAULT_DEPTH_LIMIT = 2;
 const DEFAULT_REJECT_MESSAGE = "모른다 / 알 수 없다 (verifier rejected)";
+const DEFAULT_HISTORY: VerifyHistoryTurn[] = [];
+const DEFAULT_LOCAL_SKIP_POLICY: SkipPolicy = "easy-only-depth";
+const DEFAULT_ANTHROPIC_SKIP_POLICY: SkipPolicy = "legacy-all-depth";
 const PLAUSIBILITY_MAX_TOKENS = 200;
 const VERIFIER_MAX_TOKENS = 200;
 
-export const PLAUSIBILITY_PROMPT = (q: string, ans: string): string => `다음 질문과 답변이 일반인이 백과사전(Wikipedia)에서 쉽게 확인 가능한 well-known established fact 인지 평가하라.
+function renderHistory(history: VerifyHistoryTurn[]): string {
+  if (history.length === 0) return "(없음)";
+  return history
+    .map(
+      (turn, idx) =>
+        `Turn ${idx + 1} User: ${turn.user_msg}\nTurn ${idx + 1} Assistant: ${turn.assistant_answer}`,
+    )
+    .join("\n\n");
+}
+
+function contextualPromptPreamble(history: VerifyHistoryTurn[]): string {
+  return `# 이전 대화 맥락 (지시대상 해소용)
+${renderHistory(history)}
+
+# 맥락 해석 규칙
+- 이전 assistant 답변은 referent 해소용으로만 사용하고, factual truth 는 별도로 검증하라.
+- "그 도시/그 사람/그 대학/그 영화" 같은 표현은 이전 대화의 대상을 해소한 뒤 평가하라.
+- referent 가 해소된 뒤에는 현재 답변의 정확성만 판정하라.`;
+}
+
+function withHistoryContext(prompt: string, history: VerifyHistoryTurn[]): string {
+  if (history.length === 0) return prompt;
+  return `${contextualPromptPreamble(history)}\n\n${prompt}`;
+}
+
+export const PLAUSIBILITY_PROMPT = (
+  q: string,
+  ans: string,
+  history: VerifyHistoryTurn[] = DEFAULT_HISTORY,
+): string =>
+  withHistoryContext(`다음 질문과 답변이 일반인이 백과사전(Wikipedia)에서 쉽게 확인 가능한 well-known established fact 인지 평가하라.
 
 # 질문
 ${q}
@@ -92,9 +149,10 @@ ${ans}
 - well-known: 일반인이 백과사전/news 에서 쉽게 확인 가능 (예: 한국 수도, 노벨상 수상자, 영화제 수상작)
 - not well-known: 정확한 날짜/숫자 (월/일/구체 수치), specific entity 의 변두리 attribute, 최근 1년 release/사건, 또는 답변이 추측이거나 정확도 의심
 - "모른다 / 알 수 없다" 도 not well-known (답변 자체 부재)
+- referent 가 history 로 해소되는 경우, 그 referent 를 기준으로 판단
 
 # 응답 형식 (JSON only, 단답)
-{"verdict": "YES" | "NO", "reasoning": "<한 줄 이유>"}`;
+{"verdict": "YES" | "NO", "reasoning": "<한 줄 이유>"}`, history);
 
 const VERIFIER_PROMPT_V1 = (q: string, ans: string): string => `당신은 독립 검증자다. 주어진 질문과 답변을 평가하라.
 
@@ -210,10 +268,87 @@ export function buildVerifierPrompt(
   promptVersion: PromptVersion,
   tier?: string,
   category?: string,
+  history: VerifyHistoryTurn[] = DEFAULT_HISTORY,
 ): string {
-  if (promptVersion === "v3") return VERIFIER_PROMPT_V3(q, ans, tier, category);
-  if (promptVersion === "v2") return VERIFIER_PROMPT_V2(q, ans, tier);
-  return VERIFIER_PROMPT_V1(q, ans);
+  const base =
+    promptVersion === "v3"
+      ? VERIFIER_PROMPT_V3(q, ans, tier, category)
+      : promptVersion === "v2"
+        ? VERIFIER_PROMPT_V2(q, ans, tier)
+        : VERIFIER_PROMPT_V1(q, ans);
+  return withHistoryContext(base, history);
+}
+
+function isUnknownAnswer(answer: string): boolean {
+  return /모른다|알 수 없|모르겠|확실하지|impossible|cannot|unknown|don't know|do not know/i.test(answer);
+}
+
+function resolveStrategy(
+  strategy: VerifyStrategy | undefined,
+  mainProvider?: string,
+  mainModel?: string,
+): ResolvedVerifyStrategy {
+  if (!strategy || strategy === "anthropic-best") return "anthropic-best";
+  if (strategy === "local-gemma-current") return "local-gemma-current";
+  if (mainProvider === "openai-compat" && /gemma/i.test(mainModel ?? "")) {
+    return "local-gemma-current";
+  }
+  return "anthropic-best";
+}
+
+function inferRuntimeCategory(question: string): string {
+  const normalized = question.toLowerCase();
+  const liveHint =
+    /(실시간|현재|지금|오늘|방금|latest|current|live|recent|up-to-date)/i.test(question);
+  if (liveHint) return "honest-cascade";
+
+  const easyHint =
+    /(수도|인구|면적|통화|언어|대륙|나라|국가|capital|population|area|currency|language|continent|country)/i.test(
+      question,
+    );
+  if (easyHint) return "easy-cascade-baseline";
+
+  const referentHint =
+    /(그\s?(도시|나라|국가|영화|사람|인물|대학|학교|회사|브랜드)|that\s+(city|country|movie|person|university|school|company|brand))/i.test(
+      question,
+    );
+  if (
+    referentHint &&
+    /(capital|population|area|currency|language|country|수도|인구|면적|통화|언어|국가|나라)/i.test(
+      normalized,
+    )
+  ) {
+    return "easy-cascade-baseline";
+  }
+
+  return "fabrication-cascade";
+}
+
+function shouldSkipVerifier(
+  plausibilityVerdict: PlausibilityVerdict,
+  turnIndex: number,
+  depthLimit: number,
+  category: string | undefined,
+  skipPolicy: SkipPolicy,
+): boolean {
+  if (plausibilityVerdict !== "YES" || turnIndex > depthLimit) return false;
+  if (skipPolicy === "legacy-all-depth") return true;
+  if (skipPolicy === "easy-only-depth") return category === "easy-cascade-baseline";
+  return false;
+}
+
+function shouldForceReject(
+  category: string | undefined,
+  turnIndex: number,
+  verifierVerdict: VerifierVerdict,
+  answer: string,
+  enabled: boolean,
+): boolean {
+  if (!enabled) return false;
+  if (verifierVerdict !== "ACCEPT") return false;
+  if (category !== "fabrication-cascade") return false;
+  if (turnIndex < 3) return false;
+  return !isUnknownAnswer(answer);
 }
 
 interface ResolvedClient {
@@ -258,13 +393,24 @@ function parseJsonVerdict<T extends string>(text: string, allowed: readonly T[])
 export async function runPlausibilityCheck(
   question: string,
   answer: string,
-  opts: { model?: string; client?: AnthropicClient; api_key?: string; base_url?: string } = {},
+  opts: {
+    model?: string;
+    client?: AnthropicClient;
+    api_key?: string;
+    base_url?: string;
+    history?: VerifyHistoryTurn[];
+  } = {},
 ): Promise<PlausibilityResult> {
   const model = opts.model ?? DEFAULT_PLAUSIBILITY_MODEL;
   const { client } = resolveClient(opts);
   const started = Date.now();
   try {
-    const text = await callJsonOnce(client, model, PLAUSIBILITY_PROMPT(question, answer), PLAUSIBILITY_MAX_TOKENS);
+    const text = await callJsonOnce(
+      client,
+      model,
+      PLAUSIBILITY_PROMPT(question, answer, opts.history),
+      PLAUSIBILITY_MAX_TOKENS,
+    );
     const parsed = parseJsonVerdict<"YES" | "NO">(text, ["YES", "NO"]);
     log.info(
       { event: "plausibility_check", model, verdict: parsed.verdict, duration_ms: Date.now() - started },
@@ -292,6 +438,7 @@ export async function runVerifierCheck(
     client?: AnthropicClient;
     api_key?: string;
     base_url?: string;
+    history?: VerifyHistoryTurn[];
   } = {},
 ): Promise<VerifierResult> {
   const model = opts.model ?? DEFAULT_VERIFIER_MODEL;
@@ -299,7 +446,14 @@ export async function runVerifierCheck(
   const { client } = resolveClient(opts);
   const started = Date.now();
   try {
-    const prompt = buildVerifierPrompt(question, answer, promptVersion, opts.tier, opts.category);
+    const prompt = buildVerifierPrompt(
+      question,
+      answer,
+      promptVersion,
+      opts.tier,
+      opts.category,
+      opts.history,
+    );
     const text = await callJsonOnce(client, model, prompt, VERIFIER_MAX_TOKENS);
     const parsed = parseJsonVerdict<"ACCEPT" | "REJECT">(text, ["ACCEPT", "REJECT"]);
     log.info(
@@ -332,30 +486,61 @@ export async function runVerifyChain(
   answer: string,
   opts: VerifyChainOptions = {},
 ): Promise<VerifyChainResult> {
+  const strategy = resolveStrategy(opts.strategy, opts.main_provider, opts.main_model);
   const plausibilityEnabled = opts.plausibility_enabled ?? true;
   const turnIndex = opts.turn_index ?? 1;
   const depthLimit = opts.depth_limit ?? DEFAULT_DEPTH_LIMIT;
   const rejectMessage = opts.reject_message ?? DEFAULT_REJECT_MESSAGE;
+  const history = opts.history ?? DEFAULT_HISTORY;
+  const contextualHistory = strategy === "local-gemma-current" ? history : DEFAULT_HISTORY;
+  const category =
+    opts.category ??
+    (strategy === "local-gemma-current" && opts.infer_runtime_category
+      ? inferRuntimeCategory(question)
+      : undefined);
+  const skipPolicy =
+    opts.skip_policy ??
+    (strategy === "local-gemma-current" ? DEFAULT_LOCAL_SKIP_POLICY : DEFAULT_ANTHROPIC_SKIP_POLICY);
+  const hardGuard = opts.fabrication_tail_hard_guard ?? strategy === "local-gemma-current";
   const sharedClientOpts = { client: opts.client, api_key: opts.api_key, base_url: opts.base_url };
 
   let plausibility: PlausibilityResult | undefined;
   if (plausibilityEnabled) {
     plausibility = await runPlausibilityCheck(question, answer, {
       model: opts.plausibility_model,
+      history: contextualHistory,
       ...sharedClientOpts,
     });
-    if (plausibility.verdict === "YES" && turnIndex <= depthLimit) {
-      return { path: "plausibility_skip", accepted: true, final_answer: answer, plausibility };
+    if (shouldSkipVerifier(plausibility.verdict, turnIndex, depthLimit, category, skipPolicy)) {
+      return {
+        path: "plausibility_skip",
+        accepted: true,
+        final_answer: answer,
+        plausibility,
+        strategy,
+        category,
+        turn_index: turnIndex,
+      };
     }
   }
 
-  const verifier = await runVerifierCheck(question, answer, {
+  let verifier = await runVerifierCheck(question, answer, {
     model: opts.verifier_model,
     prompt_version: opts.prompt_version ?? DEFAULT_PROMPT_VERSION,
     tier: opts.tier,
-    category: opts.category,
+    category,
+    history: contextualHistory,
     ...sharedClientOpts,
   });
+
+  if (shouldForceReject(category, turnIndex, verifier.verdict, answer, hardGuard)) {
+    verifier = {
+      ...verifier,
+      verdict: "REJECT",
+      reasoning:
+        `hard-guard: fabrication-cascade turn ${turnIndex} non-unknown specific answer must not surface after verifier ACCEPT`,
+    };
+  }
 
   const accepted = verifier.verdict === "ACCEPT";
   return {
@@ -364,5 +549,8 @@ export async function runVerifyChain(
     final_answer: accepted ? answer : rejectMessage,
     plausibility,
     verifier,
+    strategy,
+    category,
+    turn_index: turnIndex,
   };
 }

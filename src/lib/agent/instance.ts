@@ -93,7 +93,7 @@ export const ASK_ADVISOR_TOOL = "ask_advisor";
 
 import { loadRuntimeLimits } from "../config/limits";
 import { isAgentTurnHookActive, loadVerifierHookConfig } from "../config/verifier";
-import { runVerifyChain } from "../llm/verify";
+import { runVerifyChain, type VerifyHistoryTurn } from "../llm/verify";
 
 /**
  * Retry 상수들은 runtime-limits config 에서 온다. env (RETRY_LIMIT /
@@ -132,6 +132,55 @@ export function countPriorToolUses(messages: Message[], hash: string): number {
     }
   }
   return count;
+}
+
+function extractAssistantText(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content.trim();
+  return content
+    .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+    .map((b) => b.text)
+    .join("\n")
+    .trim();
+}
+
+function hasToolUse(content: string | ContentBlock[]): boolean {
+  return Array.isArray(content) && content.some((b) => b.type === "tool_use");
+}
+
+function buildVerifyHistory(
+  messages: Message[],
+  currentUserMessage: string,
+  currentAnswer: string,
+  limit: number,
+): VerifyHistoryTurn[] {
+  if (limit <= 0) return [];
+
+  const pairs: VerifyHistoryTurn[] = [];
+  let pendingUser: string | null = null;
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      if (typeof msg.content === "string") pendingUser = msg.content.trim();
+      continue;
+    }
+    if (msg.role !== "assistant" || !pendingUser) continue;
+    if (hasToolUse(msg.content)) continue;
+    const text = extractAssistantText(msg.content);
+    if (!text) continue;
+    pairs.push({ user_msg: pendingUser, assistant_answer: text });
+    pendingUser = null;
+  }
+
+  const trimmedUser = currentUserMessage.trim();
+  const trimmedAnswer = currentAnswer.trim();
+  if (pairs.length > 0) {
+    const last = pairs[pairs.length - 1]!;
+    if (last.user_msg === trimmedUser && last.assistant_answer === trimmedAnswer) {
+      pairs.pop();
+    }
+  }
+
+  return pairs.slice(-limit);
 }
 
 async function resolveToolArgsVaultRefs(sid: string, value: unknown): Promise<unknown> {
@@ -907,24 +956,43 @@ export class AgentInstance {
       const isFinalTurn = toolUseBlocks.length === 0 && response.stop_reason !== "tool_use";
       if (isFinalTurn && userMessage && isAgentTurnHookActive()) {
         const cfg = loadVerifierHookConfig();
+        const profile = this.currentProfile;
         const textBlocks = response.content.filter(
           (b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
         );
         const joined = textBlocks.map((b) => b.text).join("\n").trim();
         if (joined.length > 0) {
+          const history = buildVerifyHistory(
+            this.messages,
+            userMessage,
+            joined,
+            cfg.runtime_policy.history_turns,
+          );
+          const turnIndex = history.length + 1;
           const chainStarted = Date.now();
           const chain = await runVerifyChain(userMessage, joined, {
+            strategy: cfg.runtime_policy.strategy,
             plausibility_enabled: cfg.plausibility.enabled,
             plausibility_model: cfg.plausibility.model,
             depth_limit: cfg.plausibility.depth_limit,
             verifier_model: cfg.verifier.model,
             prompt_version: cfg.verifier.prompt_version,
+            infer_runtime_category: cfg.runtime_policy.infer_runtime_category,
+            skip_policy: cfg.runtime_policy.skip_policy,
+            fabrication_tail_hard_guard: cfg.runtime_policy.fabrication_tail_hard_guard,
+            history,
+            turn_index: turnIndex,
+            main_model: profile.model,
+            main_provider: profile.provider,
             reject_message: cfg.reject_message,
           });
           const chainDuration = Date.now() - chainStarted;
           log.info(
             {
               event: "agent_turn_verify_chain",
+              strategy: chain.strategy,
+              category: chain.category,
+              turn_index: chain.turn_index,
               path: chain.path,
               accepted: chain.accepted,
               plausibility_verdict: chain.plausibility?.verdict,
@@ -938,6 +1006,9 @@ export class AgentInstance {
             path: chain.path,
             accepted: chain.accepted,
             override_applied: !chain.accepted,
+            strategy: chain.strategy,
+            category: chain.category,
+            turn_index: chain.turn_index,
             plausibility_verdict: chain.plausibility?.verdict,
             verifier_verdict: chain.verifier?.verdict,
             duration_ms: chainDuration,

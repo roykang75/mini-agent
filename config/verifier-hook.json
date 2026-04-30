@@ -1,6 +1,6 @@
 {
   "$schema": "./verifier-hook.schema.json",
-  "_doc": "verifier+plausibility hook config (v16 best, 18-세션 D adversarial robust 통과). UI 편집 대상 — env override 우선, file fallback, code default. master `enabled` 가 OFF 면 두 hook 모두 OFF. ON 이면 individual hook 토글이 결정.",
+  "_doc": "verifier+plausibility hook config. v16 Anthropic best 와 v31 local-Gemma current lane 둘 다 여기서 제어. UI 편집 대상 — env override 우선, file fallback, code default. master `enabled` 가 OFF 면 두 hook 모두 OFF. ON 이면 individual hook 토글이 결정.",
   "enabled": false,
   "advisor_hook": true,
   "agent_turn_hook": true,
@@ -12,6 +12,13 @@
   "verifier": {
     "model": "claude-opus-4-7",
     "prompt_version": "v3"
+  },
+  "runtime_policy": {
+    "strategy": "auto",
+    "history_turns": 4,
+    "infer_runtime_category": true,
+    "skip_policy": "easy-only-depth",
+    "fabrication_tail_hard_guard": true
   },
   "reject_message": "모른다 / 알 수 없다 (verifier rejected)"
 }

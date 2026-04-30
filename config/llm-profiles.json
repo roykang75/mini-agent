@@ -19,6 +19,20 @@
       "provider": "openai-compat",
       "model": "qwen3.6-27b-mlx",
       "baseURL": "http://192.168.1.13:1234"
+    },
+    {
+      "name": "gemma-4-26b-a4b-it-mlx",
+      "label": "Gemma 4 26B A4B (local)",
+      "provider": "openai-compat",
+      "model": "gemma-4-26b-a4b-it-mlx",
+      "baseURL": "http://192.168.1.13:1234"
+    },
+    {
+      "name": "gemma-4-31b-it",
+      "label": "Gemma 4 31B IT (local)",
+      "provider": "openai-compat",
+      "model": "gemma-4-31b-it",
+      "baseURL": "http://192.168.1.13:1234"
     }
   ]
 }

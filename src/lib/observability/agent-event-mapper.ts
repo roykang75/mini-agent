@@ -199,11 +199,16 @@ export function mapAgentEvent(ev: AgentEvent, ctx: MapContext): EventRecord | nu
           path: ev.path,
           accepted: ev.accepted,
           override_applied: ev.override_applied,
+          strategy: ev.strategy,
+          category: ev.category,
+          turn_index: ev.turn_index,
           plausibility_verdict: ev.plausibility_verdict,
           verifier_verdict: ev.verifier_verdict,
         },
         payload_summary: summary(
           `${ev.path} ${ev.accepted ? "ACCEPT" : "REJECT"}` +
+            (ev.strategy ? ` strategy=${ev.strategy}` : "") +
+            (ev.category ? ` category=${ev.category}` : "") +
             (ev.plausibility_verdict ? ` plaus=${ev.plausibility_verdict}` : "") +
             (ev.verifier_verdict ? ` verif=${ev.verifier_verdict}` : ""),
         ),

@@ -169,11 +169,15 @@ function resolveVerifyDecision(verify: AdvisorClientOptions["verify"]): VerifyDe
 
 function configToChainOptions(cfg: ReturnType<typeof loadVerifierHookConfig>): VerifyChainOptions {
   return {
+    strategy: cfg.runtime_policy.strategy,
     plausibility_enabled: cfg.plausibility.enabled,
     plausibility_model: cfg.plausibility.model,
     depth_limit: cfg.plausibility.depth_limit,
     verifier_model: cfg.verifier.model,
     prompt_version: cfg.verifier.prompt_version,
+    infer_runtime_category: cfg.runtime_policy.infer_runtime_category,
+    skip_policy: cfg.runtime_policy.skip_policy,
+    fabrication_tail_hard_guard: cfg.runtime_policy.fabrication_tail_hard_guard,
     reject_message: cfg.reject_message,
   };
 }

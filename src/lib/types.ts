@@ -33,6 +33,9 @@ export type AgentEvent =
       path: "plausibility_skip" | "verifier_applied" | "off";
       accepted: boolean;
       override_applied: boolean;
+      strategy?: "anthropic-best" | "local-gemma-current";
+      category?: string;
+      turn_index?: number;
       plausibility_verdict?: "YES" | "NO" | "PARSE_FAIL";
       verifier_verdict?: "ACCEPT" | "REJECT" | "PARSE_FAIL";
       duration_ms: number;
