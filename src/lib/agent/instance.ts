@@ -906,7 +906,7 @@ export class AgentInstance {
             // system prompt 는 full text 로 담되 cache_control 메타는 그대로 보존.
             fullBody: {
               model: this.modelId,
-              max_tokens: 4096,
+              max_tokens: Number(process.env.GOAL_MAX_TOKENS ?? 4096),
               system: [
                 {
                   type: "text",
@@ -924,7 +924,7 @@ export class AgentInstance {
       try {
         for await (const ev of this.llmClient.chatStream({
           model: this.modelId,
-          max_tokens: 4096,
+          max_tokens: Number(process.env.GOAL_MAX_TOKENS ?? 4096),
           system: [
             { type: "text", text: this.systemPrompt, cache_control: { type: "ephemeral" } },
           ],
