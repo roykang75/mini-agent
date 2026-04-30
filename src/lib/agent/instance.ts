@@ -444,7 +444,11 @@ export class AgentInstance {
     // Profile lock-on-first-use: 첫 receive() 의 profileName 이 세션을 고정.
     // 이후 호출에서 다른 값이 넘어와도 무시 — 대화 중 모델 스위치 방지.
     if (!this.profileName) {
-      this.profileName = profileName ?? getDefaultProfileName();
+      const initialProfile = profileName ?? getDefaultProfileName();
+      // resolveProfile() here validates both existence and experimental-local
+      // guardrails before the session locks onto a model.
+      resolveProfile(initialProfile);
+      this.profileName = initialProfile;
     }
     this.lastActiveAt = Date.now();
 

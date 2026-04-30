@@ -22,17 +22,20 @@
     },
     {
       "name": "gemma-4-26b-a4b-it-mlx",
-      "label": "Gemma 4 26B A4B (local)",
+      "label": "Gemma 4 26B A4B (local main)",
       "provider": "openai-compat",
       "model": "gemma-4-26b-a4b-it-mlx",
-      "baseURL": "http://192.168.1.13:1234"
+      "baseURL": "http://192.168.1.13:1234",
+      "recommended": true,
+      "stability": "stable"
     },
     {
       "name": "gemma-4-31b-it",
-      "label": "Gemma 4 31B IT (local)",
+      "label": "Gemma 4 31B IT (experimental)",
       "provider": "openai-compat",
       "model": "gemma-4-31b-it",
-      "baseURL": "http://192.168.1.13:1234"
+      "baseURL": "http://192.168.1.13:1234",
+      "stability": "experimental"
     }
   ]
 }

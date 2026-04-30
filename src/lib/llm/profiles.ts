@@ -26,12 +26,18 @@ export interface LlmProfile {
   provider: ProviderName;
   model: string;
   baseURL?: string;
+  recommended?: boolean;
+  stability?: "stable" | "experimental";
 }
 
 export interface PublicLlmProfile {
   name: string;
   label: string;
   model: string;
+  recommended?: boolean;
+  stability?: "stable" | "experimental";
+  selectable?: boolean;
+  blockedReason?: string;
 }
 
 interface ProfilesFile {
@@ -43,6 +49,21 @@ const CONFIG_PATH = resolve(process.cwd(), "config/llm-profiles.json");
 
 let _cache: ProfilesFile | null = null;
 let _cacheMtime: number | null = null;
+
+function isExperimentalLocalProfile(profile: Pick<LlmProfile, "provider" | "stability">): boolean {
+  return profile.provider === "openai-compat" && profile.stability === "experimental";
+}
+
+function experimentalLocalProfilesAllowed(): boolean {
+  return process.env.ALLOW_EXPERIMENTAL_LOCAL === "1";
+}
+
+function getProfileBlockReason(profile: LlmProfile): string | null {
+  if (isExperimentalLocalProfile(profile) && !experimentalLocalProfilesAllowed()) {
+    return `LLM profile "${profile.name}" is experimental and disabled by default; set ALLOW_EXPERIMENTAL_LOCAL=1 to enable it`;
+  }
+  return null;
+}
 
 function loadProfilesFile(): ProfilesFile {
   // mtime 기반 hot-reload — config 파일이 수정되면 자동으로 재적재하고
@@ -57,6 +78,7 @@ function loadProfilesFile(): ProfilesFile {
     throw new Error(`invalid ${CONFIG_PATH}: missing default or empty profiles`);
   }
   const names = new Set<string>();
+  let recommendedLocalCount = 0;
   for (const p of parsed.profiles) {
     if (!p.name || !p.label || !p.provider || !p.model) {
       throw new Error(`profile missing required field: ${JSON.stringify(p)}`);
@@ -64,7 +86,19 @@ function loadProfilesFile(): ProfilesFile {
     if (names.has(p.name)) {
       throw new Error(`duplicate profile name: ${p.name}`);
     }
+    if (p.stability && p.stability !== "stable" && p.stability !== "experimental") {
+      throw new Error(`invalid profile stability: ${p.name} -> ${p.stability}`);
+    }
+    if (p.recommended && p.stability === "experimental") {
+      throw new Error(`experimental profile cannot be recommended: ${p.name}`);
+    }
+    if (p.provider === "openai-compat" && p.recommended) {
+      recommendedLocalCount += 1;
+    }
     names.add(p.name);
+  }
+  if (recommendedLocalCount > 1) {
+    throw new Error("at most one openai-compat profile may be marked recommended");
   }
   if (!names.has(parsed.default)) {
     throw new Error(`default profile "${parsed.default}" not in profiles list`);
@@ -86,15 +120,30 @@ export function listProfiles(): LlmProfile[] {
 }
 
 export function listPublicProfiles(): PublicLlmProfile[] {
-  return loadProfilesFile().profiles.map(({ name, label, model }) => ({
-    name,
-    label,
-    model,
-  }));
+  return loadProfilesFile().profiles.map((profile) => {
+    const blockedReason = getProfileBlockReason(profile);
+    const { name, label, model, recommended, stability } = profile;
+    return {
+      name,
+      label,
+      model,
+      ...(recommended ? { recommended } : {}),
+      ...(stability ? { stability } : {}),
+      ...(blockedReason ? { selectable: false, blockedReason } : { selectable: true }),
+    };
+  });
 }
 
 export function getDefaultProfileName(): string {
   return loadProfilesFile().default;
+}
+
+export function getPreferredLocalProfileName(): string | null {
+  const locals = loadProfilesFile().profiles.filter((p) => p.provider === "openai-compat");
+  const explicit = locals.find((p) => p.recommended);
+  if (explicit) return explicit.name;
+  const stable = locals.find((p) => p.stability !== "experimental");
+  return stable?.name ?? locals[0]?.name ?? null;
 }
 
 /**
@@ -108,6 +157,10 @@ export function resolveProfile(name: string | null | undefined): LlmProfile {
     throw new Error(
       `LLM profile "${target}" not found in config/llm-profiles.json`,
     );
+  }
+  const blockedReason = getProfileBlockReason(found);
+  if (blockedReason) {
+    throw new Error(blockedReason);
   }
   return found;
 }
@@ -136,5 +189,6 @@ export function getClientForProfile(profile: LlmProfile): LLMClient {
 /** Test-only — clear client/profile caches. */
 export function __resetProfilesForTest(): void {
   _cache = null;
+  _cacheMtime = null;
   clientCache.clear();
 }
