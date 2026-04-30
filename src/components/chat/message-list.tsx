@@ -51,6 +51,18 @@ const EXAMPLE_PROMPTS_BY_PERSONA: Record<PersonaName, ExamplePrompt[]> = {
         "impact-analysis.git 저장소의 abc1234 와 def5678 commit 사이의 영향도를 분석해줘.",
     },
   ],
+  "no-shell": [
+    {
+      icon: FolderOpen,
+      label: "파일 목록 확인",
+      prompt: "현재 디렉토리의 파일 목록을 알려줘",
+    },
+    {
+      icon: FileText,
+      label: "파일 내용 읽기",
+      prompt: "package.json 파일 내용을 보여줘",
+    },
+  ],
 };
 
 interface MessageListProps {
