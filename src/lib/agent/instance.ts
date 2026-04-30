@@ -502,7 +502,12 @@ export class AgentInstance {
 
     // Memory + curriculum recall only on the very first receive (empty working memory).
     // 14차 실험용 토글: MEMORY_RECALL=off 이면 전체 recall 블록 skip.
+    // 15차 ablation: 4 sub-block 별 individual env 토글 추가.
     const recallOff = process.env.MEMORY_RECALL === "off";
+    const recallMemoryOff = process.env.MEMORY_RECALL_MEMORY === "off";
+    const recallCurriculumOff = process.env.MEMORY_RECALL_CURRICULUM === "off";
+    const recallSelfMapOff = process.env.MEMORY_RECALL_SELF_MAP === "off";
+    const recallRecentSessionsOff = process.env.MEMORY_RECALL_RECENT_SESSIONS === "off";
     if (this.messages.length === 0 && !recallOff) {
       const memoryDir = process.env.AGENT_MEMORY_DIR;
       if (memoryDir && shouldRecall(this.sid)) {
@@ -513,8 +518,10 @@ export class AgentInstance {
             this.modelId,
             userMessage,
             {
-              includeSelfMap: isProfileSelfMapOn(),
-              includeRecentSessions: true,
+              includeMemory: !recallMemoryOff,
+              includeCurriculum: !recallCurriculumOff,
+              includeSelfMap: isProfileSelfMapOn() && !recallSelfMapOff,
+              includeRecentSessions: !recallRecentSessionsOff,
             },
           );
         if (prompt.length > 0) {

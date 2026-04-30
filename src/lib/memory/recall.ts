@@ -161,6 +161,10 @@ export interface CombinedRecallOptions
   extends RecallOptions,
     CurriculumRecallOptions,
     SelfMapOptions {
+  /** memory (`<agent_memory_recall>`) 블록 토글. default true. 15차 ablation 용. */
+  includeMemory?: boolean;
+  /** curriculum (`<curriculum_recall>`) 블록 토글. default true. 15차 ablation 용. */
+  includeCurriculum?: boolean;
   /**
    * When set, load profile from `<curriculumDir>/profiles/<model>/self-map.md`
    * and inject as `<self_map>` block. Requires `curriculumDir` to be non-null.
@@ -188,14 +192,17 @@ export async function composeCombinedRecall(
   query: string,
   opts: CombinedRecallOptions = {},
 ): Promise<CombinedRecallResult> {
-  const { prompt: memoryPrompt, hits: memoryHits } = await composeRecall(
-    memoryDir,
-    query,
-    opts,
-  );
+  let memoryPrompt = "";
+  let memoryHits: SearchHit[] = [];
+  if (opts.includeMemory !== false) {
+    const res = await composeRecall(memoryDir, query, opts);
+    memoryPrompt = res.prompt;
+    memoryHits = res.hits;
+  }
+
   let curriculumPrompt = "";
   let curriculumHits: CurriculumHit[] = [];
-  if (curriculumDir) {
+  if (curriculumDir && opts.includeCurriculum !== false) {
     const res = await composeCurriculumRecall(curriculumDir, model, query, opts);
     curriculumPrompt = res.prompt;
     curriculumHits = res.hits;
