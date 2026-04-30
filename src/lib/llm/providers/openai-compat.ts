@@ -308,6 +308,29 @@ export class OpenAICompatClient {
       content.push({ type: "tool_use", id, name, input });
     }
 
+    // Some local OpenAI-compatible servers terminate a streamed request with a
+    // bare [DONE] when the prompt overflows model context. Surface that as an
+    // error instead of silently treating it as an empty assistant reply.
+    if (
+      content.length === 0 &&
+      reasoningBuf.length === 0 &&
+      toolBuf.size === 0 &&
+      usage.input_tokens === 0 &&
+      usage.output_tokens === 0
+    ) {
+      const body =
+        "empty streamed response from openai-compat upstream (possible context overflow or incompatible stream format)";
+      log.warn(
+        {
+          event: "chat_empty_stream",
+          model: req.model,
+          duration_ms: Date.now() - started,
+        },
+        "openai-compat stream returned no content",
+      );
+      throw new LLMError(502, body);
+    }
+
     if (streamReasoningTokens != null) usage.reasoning_tokens = streamReasoningTokens;
     const response: LLMResponse = {
       content,
